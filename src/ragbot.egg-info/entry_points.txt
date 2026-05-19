@@ -1,0 +1,2 @@
+[console_scripts]
+ragbot = ragbot.cli:main
