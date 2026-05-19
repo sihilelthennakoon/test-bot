@@ -4,48 +4,334 @@ Enterprise-style retrieval augmented chatbot for simple `.txt` sources.
 
 ## What is included
 
-- LangGraph-based chat pipeline
-- FAISS vector store module
-- Separate ingestion flow for text files
+- LangGraph-based chat pipeline with explicit node routing
+- FAISS vector store module with fallback numpy backend
+- Separate ingestion flow for text files with PII masking
 - PII masking on input, retrieval context, and output
 - Guardrail nodes for inbound and outbound messages
 - Phoenix-oriented tracing/evaluation hooks
-- FastAPI service surface
+- FastAPI service surface with Swagger UI documentation
 
 ## Layout
 
-- `src/ragbot/ingestion/` for file ingestion and indexing
-- `src/ragbot/vectorstore/` for FAISS storage
-- `src/ragbot/safety/` for masking and guardrails
-- `src/ragbot/graph/` for the chat workflow
-- `src/ragbot/observability/` for Phoenix/trace hooks
-- `src/ragbot/api/` for the FastAPI app
+- `src/ragbot/ingestion/` — Text file ingestion and chunking pipeline
+- `src/ragbot/vectorstore/` — FAISS vector storage with persistence
+- `src/ragbot/safety/` — PII masking and guardrails nodes
+- `src/ragbot/graph/` — LangGraph chat workflow
+- `src/ragbot/observability/` — Phoenix tracing hooks
+- `src/ragbot/api/` — FastAPI application entrypoints
+- `data/` — Data directory (raw inputs and FAISS index)
+- `tests/` — Unit tests for core components
 
-## Quick start
+## Quick start: Setup
 
-1. Create a Python 3.10+ environment or reuse the provided `.venv`.
-2. Install dependencies with `pip install -r requirements.txt`.
-3. Put a `.txt` file in `data/raw/`.
-4. Ingest it:
+### 1. Activate the virtual environment
+
+```bash
+source .venv/bin/activate
+```
+
+Or reference the virtualenv directly in commands:
+
+```bash
+.venv/bin/python -m pip list
+```
+
+### 2. Install dependencies
+
+Install from the provided `requirements.txt`:
+
+```bash
+pip install -r requirements.txt
+```
+
+Or use `pyproject.toml` for editable install:
+
+```bash
+pip install -e .
+pip install -e ".[dev]"
+```
+
+### 3. Configure environment variables
+
+Copy `.env.example` to `.env` and fill in your API keys:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env`:
+
+```bash
+# Google Gemini API key (required)
+GOOGLE_API_KEY=your_google_api_key_here
+
+# Phoenix endpoint (optional; set to your Phoenix instance URL)
+PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006
+```
+
+If running without `.env`, export variables in your shell:
+
+```bash
+export GOOGLE_API_KEY="your_key_here"
+export PHOENIX_COLLECTOR_ENDPOINT="http://localhost:6006"
+```
+
+## Quick start: Usage
+
+### Ingest a text file
+
+Place a `.txt` file in `data/raw/`, then ingest it:
 
 ```bash
 ragbot ingest --source data/raw/sample.txt
 ```
 
-5. Run the API:
+Or directly (without CLI):
+
+```bash
+.venv/bin/python -c "
+from ragbot.service import ChatService
+service = ChatService.create()
+result = service.ingestion.ingest_file('data/raw/sample.txt')
+print(result.model_dump_json(indent=2))
+"
+```
+
+### Run the API server
+
+Start the FastAPI service:
 
 ```bash
 ragbot serve
 ```
 
-6. Send a chat request to `POST /chat`.
+Or with custom host/port:
+
+```bash
+ragbot serve --host 0.0.0.0 --port 8080
+```
+
+Or via environment variables:
+
+```bash
+RAGBOT_HOST=0.0.0.0 RAGBOT_PORT=8080 ragbot serve
+```
+
+The server will print endpoints:
+
+```
+Starting RAG Bot API server on http://127.0.0.1:8000
+  POST /chat — Send a message for the chatbot to answer
+  POST /ingest — Ingest a text file into the index
+  GET /health — Health check endpoint
+  GET /status — Service status and index information
+  GET /docs — Interactive API documentation (Swagger UI)
+  GET /redoc — ReDoc API documentation
+```
+
+### API Endpoints
+
+#### Health check
+
+```bash
+curl http://localhost:8000/health
+```
+
+#### Service status
+
+```bash
+curl http://localhost:8000/status
+```
+
+#### Ingest a file
+
+```bash
+curl -X POST http://localhost:8000/ingest \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source_path": "data/raw/sample.txt",
+    "rebuild": true
+  }'
+```
+
+#### Send a chat message
+
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "What is the emergency hotline?",
+    "conversation_id": "user_123",
+    "top_k": 4
+  }'
+```
+
+Response:
+
+```json
+{
+  "answer": "The emergency hotline is [PHONE_1].",
+  "sources": [
+    {
+      "chunk_id": "chunk_abc123",
+      "source_path": "data/raw/sample.txt",
+      "text": "emergency hotline is 555-123-4567",
+      "score": 0.95,
+      "chunk_index": 1,
+      "metadata": {"was_masked": true, "pii_entities": [...]}
+    }
+  ],
+  "input_safety": {
+    "allowed": true,
+    "reason": "Input passed guardrails.",
+    "warnings": [],
+    "masked_text": "What is the emergency [PHONE_1]?"
+  },
+  "output_safety": {
+    "allowed": true,
+    "reason": "Output passed guardrails.",
+    "warnings": [],
+    "masked_text": "The emergency hotline is [PHONE_1]."
+  },
+  "trace_id": "trace_xyz789",
+  "conversation_id": "user_123"
+}
+```
+
+#### Interactive docs
+
+Open http://localhost:8000/docs in your browser to explore endpoints interactively.
 
 ## Environment variables
 
-- `RAGBOT_DATA_DIR`
-- `RAGBOT_INDEX_DIR`
-- `RAGBOT_GEMINI_MODEL`
-- `RAGBOT_GEMINI_EMBEDDING_MODEL`
-- `GOOGLE_API_KEY`
-- `PHOENIX_PROJECT_NAME`
-- `PHOENIX_COLLECTOR_ENDPOINT`
+| Variable | Default | Description |
+|---|---|---|
+| `GOOGLE_API_KEY` | (none) | Google Generative AI API key (required for Gemini) |
+| `RAGBOT_GEMINI_MODEL` | `gemini-1.5-flash` | Gemini model to use for generation |
+| `RAGBOT_GEMINI_EMBEDDING_MODEL` | `models/text-embedding-004` | Gemini embedding model |
+| `RAGBOT_DATA_DIR` | `./data` | Root data directory |
+| `RAGBOT_RAW_DIR` | `./data/raw` | Directory for raw input files |
+| `RAGBOT_INDEX_DIR` | `./data/index` | Directory for FAISS index and metadata |
+| `RAGBOT_MAX_INPUT_CHARS` | `6000` | Maximum input message length |
+| `RAGBOT_RETRIEVAL_TOP_K` | `4` | Number of retrieval results to use |
+| `PHOENIX_PROJECT_NAME` | `ragbot` | Phoenix project name for tracing |
+| `PHOENIX_COLLECTOR_ENDPOINT` | `http://localhost:6006` | Phoenix collector endpoint URL |
+| `RAGBOT_HOST` | `127.0.0.1` | API server host |
+| `RAGBOT_PORT` | `8000` | API server port |
+| `RAGBOT_RELOAD` | `false` | Enable hot-reload (dev only) |
+
+## Testing
+
+Run the included tests:
+
+```bash
+pytest tests/
+```
+
+Or test specific modules:
+
+```bash
+pytest tests/test_pii.py tests/test_guardrails.py tests/test_faiss_store.py
+```
+
+## Architecture
+
+### Chat Flow (LangGraph)
+
+```
+User Input
+    ↓
+Input Guardrails ← Checks for injection, length
+    ↓
+PII Mask Input ← Redacts emails, phones, SSNs
+    ↓
+Retrieve ← FAISS similarity search
+    ↓
+Generate ← Gemini with context
+    ↓
+Output Guardrails ← Validates model output
+    ↓
+PII Mask Output ← Redacts leakage
+    ↓
+Response (with trace_id, safety decisions)
+```
+
+### Component Interaction
+
+- **Ingestion**: Read → Chunk → Mask PII → Embed → Index (FAISS)
+- **Chat**: Guard → Mask → Retrieve → Generate → Guard → Mask
+- **Observability**: Wrap all steps with OpenTelemetry spans → Phoenix
+- **API**: FastAPI routes map to service methods
+
+## Development
+
+### Adding a new PII entity type
+
+Edit `src/ragbot/safety/pii.py`:
+
+```python
+class PIIMasker:
+    def __init__(self) -> None:
+        self._patterns: list[tuple[str, re.Pattern[str]]] = [
+            ("email", re.compile(r"...")),
+            ("your_new_type", re.compile(r"...")),  # Add here
+        ]
+```
+
+### Adding a new guardrail
+
+Edit `src/ragbot/safety/guardrails.py`:
+
+```python
+def check_input(self, text: str) -> GuardrailDecision:
+    # Add your check here
+    if some_condition(text):
+        return GuardrailDecision(False, "Reason for block")
+    return GuardrailDecision(True, "Passed")
+```
+
+### Swapping the LLM provider
+
+Edit `src/ragbot/llm/gemini.py` or add a new module, then update `src/ragbot/graph/chat_graph.py` to wire it:
+
+```python
+answerer=YourNewAnswerer(model_name, api_key)
+```
+
+### Swapping the embedding provider
+
+If not using Gemini embeddings, use the fallback `HashEmbeddingProvider` or implement your own in `src/ragbot/embeddings/providers.py`, then inject it in `src/ragbot/service.py`.
+
+## Observability & Evaluation
+
+Phoenix tracing is configured in `src/ragbot/observability/phoenix.py`. Launch a local Phoenix instance:
+
+```bash
+pip install arize-phoenix
+phoenix launch
+```
+
+Then point your chatbot to it:
+
+```bash
+export PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006
+ragbot serve
+```
+
+Traces will appear in the Phoenix UI at http://localhost:6006.
+
+## Production Considerations
+
+1. **PII Masking Strategy**: The system masks PII before indexing and again on input/output. Tune the patterns in `pii.py` for your domain.
+2. **Guardrails Strictness**: Adjust `guardrails.py` thresholds based on your risk tolerance. See `.env` for `RAGBOT_MAX_INPUT_CHARS`.
+3. **Retrieval Quality**: Increase `RAGBOT_RETRIEVAL_TOP_K` if answers lack context; decrease if irrelevant results appear.
+4. **Embedding Model**: For production, replace `HashEmbeddingProvider` with a real embedding service (Gemini, OpenAI, Hugging Face).
+5. **LLM Model**: `gemini-1.5-flash` is fast but less capable; use `gemini-1.5-pro` for complex reasoning.
+6. **Index Persistence**: FAISS index is persisted in `RAGBOT_INDEX_DIR`. Back this directory for durability.
+7. **Concurrency**: FastAPI/Uvicorn handles concurrent requests; tune `--workers` based on load testing.
+8. **Logging**: Use environment variables to control verbosity in production.
+
+## License
+
+MIT

@@ -26,11 +26,20 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-    service = ChatService.create(get_settings())
+    settings = get_settings()
 
     if args.command == "serve":
-        uvicorn.run("ragbot.api.app:app", host=args.host, port=args.port, reload=False)
+        host = args.host if args.host != "127.0.0.1" else settings.server_host
+        port = args.port if args.port != 8000 else settings.server_port
+        print(f"Starting RAG Bot API server on http://{host}:{port}")
+        print(f"  POST /chat — Send a message for the chatbot to answer")
+        print(f"  POST /ingest — Ingest a text file into the index")
+        print(f"  GET /health — Health check endpoint")
+        print(f"  GET /docs — Interactive API documentation (Swagger UI)")
+        uvicorn.run("ragbot.api.app:app", host=host, port=port, reload=settings.server_reload)
         return
+    
+    service = ChatService.create(settings)
 
     if args.command == "ingest":
         result = service.ingestion.ingest_file(args.source, rebuild=args.rebuild)

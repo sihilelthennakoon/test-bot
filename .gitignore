@@ -1,0 +1,60 @@
+# Environment variables with secrets
+.env
+.env.local
+.env.*.local
+
+# Python / pip
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Poetry
+poetry.lock
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Data / indexes
+data/index/
+data/raw/*.faiss
+data/*.jsonl
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

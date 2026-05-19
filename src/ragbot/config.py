@@ -4,6 +4,10 @@ from dataclasses import dataclass
 from pathlib import Path
 import os
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 @dataclass(frozen=True, slots=True)
 class Settings:
@@ -21,6 +25,9 @@ class Settings:
     )
     max_input_chars: int = int(os.getenv("RAGBOT_MAX_INPUT_CHARS", "6000"))
     retrieval_top_k: int = int(os.getenv("RAGBOT_RETRIEVAL_TOP_K", "4"))
+    server_host: str = os.getenv("RAGBOT_HOST", "127.0.0.1")
+    server_port: int = int(os.getenv("RAGBOT_PORT", "8000"))
+    server_reload: bool = os.getenv("RAGBOT_RELOAD", "false").lower() in {"true", "1", "yes"}
 
     def ensure_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
