@@ -46,13 +46,6 @@ def bootstrap_phoenix(*, project_name: str, collector_endpoint: str = "http://lo
         _TRACER_PROVIDER = None
         return None
 
-    try:
-        from openinference.instrumentation.langchain import LangChainInstrumentor
-
-        LangChainInstrumentor().instrument(tracer_provider=tracer_provider)
-    except Exception:
-        pass
-
     _REGISTERED = True
     _TRACER_PROVIDER = tracer_provider
     return tracer_provider

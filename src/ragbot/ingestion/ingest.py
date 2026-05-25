@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from opentelemetry import trace as otel_trace
-
 from ragbot.safety.pii import PIIMasker
 from ragbot.schemas import DocumentChunk, IngestResponse, new_id
 from ragbot.vectorstore.faiss_store import FaissVectorStore
@@ -35,47 +33,40 @@ class IngestionService:
     pii_masker: PIIMasker
 
     def ingest_file(self, source_path: str | Path, *, rebuild: bool = True) -> IngestResponse:
-        tracer = otel_trace.get_tracer(__name__)
-        with tracer.start_as_current_span("ingest.file") as span:
-            path = Path(source_path)
-            span.set_attribute("ragbot.source_path", str(path))
-            span.set_attribute("ragbot.rebuild", rebuild)
-
-            if not path.exists():
-                raise FileNotFoundError(f"Source file not found: {path}")
-            text = path.read_text(encoding="utf-8")
-            raw_chunks = split_text(text)
-            chunks: list[DocumentChunk] = []
-            masked_chunk_count = 0
-            for chunk_index, chunk_text in enumerate(raw_chunks):
-                masked_result = self.pii_masker.mask(chunk_text)
-                masked_chunk_count += int(masked_result.was_masked)
-                chunks.append(
-                    DocumentChunk(
-                        chunk_id=new_id("chunk"),
-                        source_path=str(path),
-                        text=masked_result.text,
-                        chunk_index=chunk_index,
-                        metadata={
-                            "source_path": str(path),
-                            "was_masked": masked_result.was_masked,
-                            "pii_entities": masked_result.entities,
-                        },
-                    )
+        path = Path(source_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Source file not found: {path}")
+        text = path.read_text(encoding="utf-8")
+        raw_chunks = split_text(text)
+        chunks: list[DocumentChunk] = []
+        masked_chunk_count = 0
+        for chunk_index, chunk_text in enumerate(raw_chunks):
+            masked_result = self.pii_masker.mask(chunk_text)
+            masked_chunk_count += int(masked_result.was_masked)
+            chunks.append(
+                DocumentChunk(
+                    chunk_id=new_id("chunk"),
+                    source_path=str(path),
+                    text=masked_result.text,
+                    chunk_index=chunk_index,
+                    metadata={
+                        "source_path": str(path),
+                        "was_masked": masked_result.was_masked,
+                        "pii_entities": masked_result.entities,
+                    },
                 )
-
-            if rebuild:
-                self.store.clear()
-            self.store.add_chunks(chunks)
-            self.store.persist()
-            span.set_attribute("ragbot.chunk_count", len(chunks))
-            span.set_attribute("ragbot.masked_chunk_count", masked_chunk_count)
-            return IngestResponse(
-                source_path=str(path),
-                chunk_count=len(chunks),
-                index_path=str(self.store.index_path),
-                masked_chunk_count=masked_chunk_count,
             )
+
+        if rebuild:
+            self.store.clear()
+        self.store.add_chunks(chunks)
+        self.store.persist()
+        return IngestResponse(
+            source_path=str(path),
+            chunk_count=len(chunks),
+            index_path=str(self.store.index_path),
+            masked_chunk_count=masked_chunk_count,
+        )
 
     def ingest_directory(self, source_dir: str | Path, *, rebuild: bool = True) -> list[IngestResponse]:
         directory = Path(source_dir)
