@@ -2,14 +2,37 @@
 
 Enterprise-style retrieval augmented chatbot for simple `.txt` sources.
 
-## What is included
+## Quick Start
+
+**New to this project?** Start here: [QUICKSTART.md](QUICKSTART.md)
+
+The fastest way to get running:
+
+```bash
+# Activate environment
+source .venv/bin/activate
+
+# Check dependencies
+python check_deps.py
+
+# Start the server
+python main.py serve
+
+# In another terminal, test it
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is in the data?"}'
+```
+
+
+Visit http://localhost:8000/docs for interactive API documentation.
 
 - LangGraph-based chat pipeline with explicit node routing
 - FAISS vector store module with fallback numpy backend
 - Separate ingestion flow for text files with PII masking
 - PII masking on input, retrieval context, and output
 - Guardrail nodes for inbound and outbound messages
-- Phoenix-oriented tracing/evaluation hooks
+- **Phoenix auto-instrumentation** for automatic tracing (no manual spans!)
 - FastAPI service surface with Swagger UI documentation
 
 ## Layout
@@ -18,7 +41,7 @@ Enterprise-style retrieval augmented chatbot for simple `.txt` sources.
 - `src/ragbot/vectorstore/` — FAISS vector storage with persistence
 - `src/ragbot/safety/` — PII masking and guardrails nodes
 - `src/ragbot/graph/` — LangGraph chat workflow
-- `src/ragbot/observability/` — Phoenix tracing hooks
+- `src/ragbot/observability/` — Phoenix tracing hooks and bootstrap
 - `src/ragbot/api/` — FastAPI application entrypoints
 - `data/` — Data directory (raw inputs and FAISS index)
 - `tests/` — Unit tests for core components
@@ -66,7 +89,8 @@ Then edit `.env`:
 # Google Gemini API key (required)
 GOOGLE_API_KEY=your_google_api_key_here
 
-# Phoenix endpoint (optional; set to your Phoenix instance URL)
+# Phoenix tracing project name and collector endpoint
+PHOENIX_PROJECT_NAME=test-bot-with-eval
 PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006
 ```
 
@@ -208,6 +232,8 @@ Open http://localhost:8000/docs in your browser to explore endpoints interactive
 | Variable | Default | Description |
 |---|---|---|
 | `GOOGLE_API_KEY` | (none) | Google Generative AI API key (required for Gemini) |
+| `RAGBOT_EMBEDDING_PROVIDER` | `sentence-transformer` | Embedding backend (`sentence-transformer`, `gemini`, or `hash`) |
+| `RAGBOT_SENTENCE_TRANSFORMER_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Sentence-transformer embedding model |
 | `RAGBOT_GEMINI_MODEL` | `gemini-1.5-flash` | Gemini model to use for generation |
 | `RAGBOT_GEMINI_EMBEDDING_MODEL` | `models/text-embedding-004` | Gemini embedding model |
 | `RAGBOT_DATA_DIR` | `./data` | Root data directory |
@@ -215,7 +241,7 @@ Open http://localhost:8000/docs in your browser to explore endpoints interactive
 | `RAGBOT_INDEX_DIR` | `./data/index` | Directory for FAISS index and metadata |
 | `RAGBOT_MAX_INPUT_CHARS` | `6000` | Maximum input message length |
 | `RAGBOT_RETRIEVAL_TOP_K` | `4` | Number of retrieval results to use |
-| `PHOENIX_PROJECT_NAME` | `ragbot` | Phoenix project name for tracing |
+| `PHOENIX_PROJECT_NAME` | `test-bot-with-eval` | Phoenix project name for tracing |
 | `PHOENIX_COLLECTOR_ENDPOINT` | `http://localhost:6006` | Phoenix collector endpoint URL |
 | `RAGBOT_HOST` | `127.0.0.1` | API server host |
 | `RAGBOT_PORT` | `8000` | API server port |
@@ -305,7 +331,27 @@ If not using Gemini embeddings, use the fallback `HashEmbeddingProvider` or impl
 
 ## Observability & Evaluation
 
-Phoenix tracing is configured in `src/ragbot/observability/phoenix.py`. Launch a local Phoenix instance:
+Every chat request is automatically traced using **OpenTelemetry + Arize Phoenix** with **auto-instrumentation**. This means Phoenix automatically instruments:
+- FastAPI HTTP routes
+- LangChain components
+- Business logic (guardrails, retrieval, generation)
+- External APIs (Gemini)
+
+**No manual span code needed!** Just write clean business logic and Phoenix automatically creates detailed traces.
+
+Resulting trace structure:
+```
+POST /chat [500ms]
+├─ starlette.request [500ms]
+├─ guardrails.check_input [2ms]
+├─ faiss_store.search [50ms]
+├─ gemini.invoke [410ms]
+└─ output validation [1ms]
+```
+
+### Quick Start with Phoenix
+
+Launch a local Phoenix instance:
 
 ```bash
 pip install arize-phoenix
@@ -319,7 +365,20 @@ export PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006
 ragbot serve
 ```
 
-Traces will appear in the Phoenix UI at http://localhost:6006.
+Send a chat request and view the trace in the Phoenix UI at http://localhost:6006.
+
+### Documentation
+
+- **[AUTO_INSTRUMENTATION.md](AUTO_INSTRUMENTATION.md)** — How auto-instrumentation works (new!)
+- **[PHOENIX.md](PHOENIX.md)** — Complete setup guide (local, Docker, managed cloud)
+- **[TRACING.md](TRACING.md)** — Quick reference for spans, attributes, and code examples
+
+Key topics:
+- How Phoenix tracing works (OTel SDK → Phoenix collector)
+- Viewing and analyzing traces in Phoenix UI
+- Recording evaluations with `evaluations.jsonl`
+- Performance considerations and production deployment
+- Troubleshooting missing traces
 
 ## Production Considerations
 

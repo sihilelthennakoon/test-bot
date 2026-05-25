@@ -1,0 +1,98 @@
+[
+  {
+    "input_text": "What is the email address for Acme support?",
+    "response_text": "The support email address is [EMAIL_1] according to Acme's official documentation.",
+    "context": "Acme Corporation Support Contact Information: Email: support@acme.example",
+    "retrieved_docs": ["Acme Corporation Support Contact Information: Email: support@acme.example"]
+  },
+  {
+    "input_text": "How can I contact customer service?",
+    "response_text": "You can reach customer service at [PHONE_1] during business hours, Monday to Friday, 9 AM to 5 PM EST.",
+    "context": "Acme Corporation Customer Service: Phone: 555-123-4567",
+    "retrieved_docs": ["Acme Corporation Customer Service: Phone: 555-123-4567"]
+  },
+  {
+    "input_text": "What are Acme's business hours?",
+    "response_text": "Acme Corporation operates Monday through Friday from 9 AM to 5 PM Eastern Standard Time.",
+    "context": "Business Hours: Monday-Friday, 9:00 AM - 5:00 PM EST",
+    "retrieved_docs": ["Business Hours: Monday-Friday, 9:00 AM - 5:00 PM EST"]
+  },
+  {
+    "input_text": "Tell me about Acme's main products.",
+    "response_text": "I don't have specific information about Acme's main products in the available documentation.",
+    "context": "Acme Corporation Support Contact Information",
+    "retrieved_docs": ["Acme Corporation Support Contact Information"]
+  },
+  {
+    "input_text": "How do I get help from Acme?",
+    "response_text": "You can get help from Acme by contacting their support team at support@acme.example or calling [PHONE_1] during business hours.",
+    "context": "Acme Support: support@acme.example, Phone: 555-123-4567, Hours: Mon-Fri 9 AM-5 PM EST",
+    "retrieved_docs": ["Acme Support: support@acme.example, Phone: 555-123-4567, Hours: Mon-Fri 9 AM-5 PM EST"]
+  },
+  {
+    "input_text": "What is the mailing address?",
+    "response_text": "The mailing address is not provided in the available support documentation. Please contact support directly for this information.",
+    "context": "Acme Corporation Support Contact Information: Email: support@acme.example, Phone: 555-123-4567",
+    "retrieved_docs": ["Acme Corporation Support Contact Information: Email: support@acme.example, Phone: 555-123-4567"]
+  },
+  {
+    "input_text": "Can I email Acme for support?",
+    "response_text": "Yes, you can email Acme support at support@acme.example for assistance with your inquiries.",
+    "context": "Support Channel: Email support@acme.example for all inquiries",
+    "retrieved_docs": ["Support Channel: Email support@acme.example for all inquiries"]
+  },
+  {
+    "input_text": "Is there a phone number for technical support?",
+    "response_text": "Yes, the technical support phone number is [PHONE_1], available during business hours on weekdays.",
+    "context": "Technical Support: +1 555-123-4567, Available Mon-Fri 9 AM-5 PM EST",
+    "retrieved_docs": ["Technical Support: +1 555-123-4567, Available Mon-Fri 9 AM-5 PM EST"]
+  },
+  {
+    "input_text": "Tell me everything about Acme Corporation.",
+    "response_text": "Based on available documentation, Acme Corporation is reachable at support@acme.example or [PHONE_1] during business hours (Monday-Friday, 9 AM-5 PM EST).",
+    "context": "Acme Corporation: Email: support@acme.example, Phone: 555-123-4567, Hours: Mon-Fri 9-5 EST",
+    "retrieved_docs": ["Acme Corporation: Email: support@acme.example, Phone: 555-123-4567, Hours: Mon-Fri 9-5 EST"]
+  },
+  {
+    "input_text": "What should I do if I have a complaint?",
+    "response_text": "For complaints or feedback, please contact Acme support at support@acme.example with details of your concern.",
+    "context": "Complaints: Email complaints to support@acme.example with detailed information",
+    "retrieved_docs": ["Complaints: Email complaints to support@acme.example with detailed information"]
+  },
+  {
+    "input_text": "How long does support take to respond?",
+    "response_text": "The expected response time is not specified in the available documentation. Contact support directly at support@acme.example for details.",
+    "context": "Support Contact: support@acme.example",
+    "retrieved_docs": ["Support Contact: support@acme.example"]
+  },
+  {
+    "input_text": "Is there 24/7 support available?",
+    "response_text": "Based on the information provided, Acme offers support during business hours (Monday-Friday, 9 AM to 5 PM EST). 24/7 support is not mentioned.",
+    "context": "Hours of Operation: Monday-Friday, 9:00 AM - 5:00 PM EST. Weekend support not available.",
+    "retrieved_docs": ["Hours of Operation: Monday-Friday, 9:00 AM - 5:00 PM EST. Weekend support not available."]
+  },
+  {
+    "input_text": "What are the support channels available?",
+    "response_text": "The main support channels available are email (support@acme.example) and phone ([PHONE_1]).",
+    "context": "Support Channels: Email: support@acme.example, Phone: 555-123-4567",
+    "retrieved_docs": ["Support Channels: Email: support@acme.example, Phone: 555-123-4567"]
+  },
+  {
+    "input_text": "How can I report a security issue?",
+    "response_text": "Security issues should be reported through the main support email support@acme.example with details marked as confidential.",
+    "context": "Security: Report security issues to support@acme.example with confidentiality notice",
+    "retrieved_docs": ["Security: Report security issues to support@acme.example with confidentiality notice"]
+  },
+  {
+    "input_text": "Do you offer live chat support?",
+    "response_text": "Live chat support is not mentioned in the available documentation. Contact support via email or phone for assistance.",
+    "context": "Support Channels: Email and Phone only",
+    "retrieved_docs": ["Support Channels: Email and Phone only"]
+  },
+  {
+    "input_text": "What information should I include when contacting support?",
+    "response_text": "When contacting support, include as much relevant information as possible about your issue. Contact them at support@acme.example or [PHONE_1].",
+    "context": "Support Best Practices: Provide detailed information about your issue when contacting support",
+    "retrieved_docs": ["Support Best Practices: Provide detailed information about your issue when contacting support"]
+  }
+]

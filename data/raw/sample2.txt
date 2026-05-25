@@ -1,0 +1,5 @@
+Product Overview: AuroraLamp
+
+AuroraLamp is a smart bedside lamp that supports voice control, color presets, and scheduled timers. It consumes 7W on average and supports Wi-Fi and Bluetooth pairing. Warranty: 2 years.
+
+Support: For setup assistance email support@auroralight.example or call 800-555-0000.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import argparse
 
 import uvicorn
 
@@ -32,10 +33,6 @@ def main() -> None:
         host = args.host if args.host != "127.0.0.1" else settings.server_host
         port = args.port if args.port != 8000 else settings.server_port
         print(f"Starting RAG Bot API server on http://{host}:{port}")
-        print(f"  POST /chat — Send a message for the chatbot to answer")
-        print(f"  POST /ingest — Ingest a text file into the index")
-        print(f"  GET /health — Health check endpoint")
-        print(f"  GET /docs — Interactive API documentation (Swagger UI)")
         uvicorn.run("ragbot.api.app:app", host=host, port=port, reload=settings.server_reload)
         return
     

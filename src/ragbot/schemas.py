@@ -55,7 +55,6 @@ class ChatResponse(BaseModel):
     sources: list[RetrievalHit] = Field(default_factory=list)
     input_safety: SafetyDecision
     output_safety: SafetyDecision
-    trace_id: str = Field(default_factory=new_id)
     conversation_id: str | None = None
 
 
@@ -64,16 +63,3 @@ class IngestResponse(BaseModel):
     chunk_count: int
     index_path: str
     masked_chunk_count: int
-
-
-class EvaluationExample(BaseModel):
-    question: str
-    expected_terms: list[str] = Field(default_factory=list)
-
-
-class EvaluationResult(BaseModel):
-    question: str
-    answer: str
-    retrieved_chunk_ids: list[str] = Field(default_factory=list)
-    contains_expected_terms: bool = False
-    trace_id: str = Field(default_factory=new_id)

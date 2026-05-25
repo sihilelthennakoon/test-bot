@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  langfuse:
+    image: langfuse/langfuse:latest
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/langfuse
+      NEXTAUTH_SECRET: mysecret
+      SALT: mysalt
+      CLICKHOUSE_URL: http://clickhouse:8123
+      REDIS_HOST: redis
+    depends_on:
+      - postgres
+      - clickhouse
+      - redis
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: langfuse
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+
+  redis:
+    image: redis:7

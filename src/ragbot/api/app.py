@@ -1,7 +1,7 @@
+
 from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException
-
 from ragbot.config import get_settings
 from ragbot.schemas import ChatRequest, ChatResponse, IngestRequest, IngestResponse
 from ragbot.service import ChatService
@@ -13,7 +13,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.project_name,
         version="0.1.0",
-        description="Enterprise RAG chatbot with LangGraph, FAISS, and Phoenix observability",
+        description="Enterprise RAG chatbot with LangGraph and FAISS",
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
@@ -64,11 +64,15 @@ def create_app() -> FastAPI:
             top_k: Number of retrieval results (1-12, default 4)
         """
         try:
-            return service.runtime.run(
-                request.message,
-                top_k=request.top_k,
-                conversation_id=request.conversation_id,
+            result = service.chat_app.invoke(
+                {
+                    "message": request.message,
+                    "top_k": request.top_k,
+                    "conversation_id": request.conversation_id,
+                },
+                config=service.build_invocation_config(request.conversation_id),
             )
+            return ChatResponse.model_validate(result)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 

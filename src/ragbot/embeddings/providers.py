@@ -85,3 +85,51 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
 
     def embed_query(self, text: str) -> list[float]:
         return self._client_instance().embed_query(text)
+
+
+class SentenceTransformerEmbeddingProvider(EmbeddingProvider):
+    def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> None:
+        self.model_name = model_name
+        self._client = None
+        self._dimension: int | None = None
+
+    @property
+    def dimension(self) -> int:
+        if self._dimension is not None:
+            return self._dimension
+        client = self._client_instance()
+        self._dimension = int(client.get_sentence_embedding_dimension())
+        return self._dimension
+
+    def _client_instance(self):
+        if self._client is not None:
+            return self._client
+        try:
+            from sentence_transformers import SentenceTransformer
+        except Exception as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError(
+                "SentenceTransformer embeddings are unavailable. Install sentence-transformers."
+            ) from exc
+
+        self._client = SentenceTransformer(self.model_name)
+        return self._client
+
+    def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
+        client = self._client_instance()
+        vectors = client.encode(
+            list(texts),
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        return vectors.astype(np.float32).tolist()
+
+    def embed_query(self, text: str) -> list[float]:
+        client = self._client_instance()
+        vector = client.encode(
+            text,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        return vector.astype(np.float32).tolist()
