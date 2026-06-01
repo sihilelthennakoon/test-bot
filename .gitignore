@@ -58,3 +58,5 @@ data/*.jsonl
 # OS
 .DS_Store
 Thumbs.db
+
+data/fetch/

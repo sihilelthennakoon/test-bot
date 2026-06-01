@@ -154,6 +154,29 @@ Starting RAG Bot API server on http://127.0.0.1:8000
   GET /redoc — ReDoc API documentation
 ```
 
+### Fetch traces and spans from Phoenix
+
+Fetch CHAIN spans for a fixed time window:
+
+```bash
+ragbot fetch-phoenix \
+  --from 2026-06-01T09:00:00Z \
+  --to 2026-06-01T10:00:00Z \
+  --span-kind CHAIN
+```
+
+Run in incremental mode using a local checkpoint:
+
+```bash
+ragbot fetch-phoenix --delta --to 2026-06-01T10:00:00Z
+```
+
+Optional loop mode for worker-style execution:
+
+```bash
+ragbot fetch-phoenix --delta --poll-interval-seconds 60
+```
+
 ### API Endpoints
 
 #### Health check
@@ -243,6 +266,11 @@ Open http://localhost:8000/docs in your browser to explore endpoints interactive
 | `RAGBOT_RETRIEVAL_TOP_K` | `4` | Number of retrieval results to use |
 | `PHOENIX_PROJECT_NAME` | `test-bot-with-eval` | Phoenix project name for tracing |
 | `PHOENIX_COLLECTOR_ENDPOINT` | `http://localhost:6006` | Phoenix collector endpoint URL |
+| `PHOENIX_QUERY_ENDPOINT` | `http://localhost:6006` | Phoenix query endpoint used by fetch worker |
+| `PHOENIX_FETCH_OUTPUT_DIR` | `data/fetch/phoenix` | Output directory for fetched JSONL files |
+| `PHOENIX_FETCH_CHECKPOINT_FILE` | `data/fetch/phoenix/checkpoint.json` | Local incremental checkpoint file |
+| `PHOENIX_FETCH_BATCH_SIZE` | `200` | Max traces/spans fetched per adapter call |
+| `PHOENIX_FETCH_SPAN_KIND` | `CHAIN` | Default span kind filter for fetch worker |
 | `RAGBOT_HOST` | `127.0.0.1` | API server host |
 | `RAGBOT_PORT` | `8000` | API server port |
 | `RAGBOT_RELOAD` | `false` | Enable hot-reload (dev only) |

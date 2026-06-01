@@ -30,6 +30,13 @@ class Settings:
     retrieval_top_k: int = int(os.getenv("RAGBOT_RETRIEVAL_TOP_K", "4"))
     phoenix_project_name: str = os.getenv("PHOENIX_PROJECT_NAME", "test-bot-with-eval")
     phoenix_collector_endpoint: str = os.getenv("PHOENIX_COLLECTOR_ENDPOINT", "http://localhost:6006")
+    phoenix_query_endpoint: str = os.getenv("PHOENIX_QUERY_ENDPOINT", "http://localhost:6006")
+    phoenix_fetch_output_dir: Path = Path(os.getenv("PHOENIX_FETCH_OUTPUT_DIR", "data/fetch/phoenix"))
+    phoenix_fetch_checkpoint_file: Path = Path(
+        os.getenv("PHOENIX_FETCH_CHECKPOINT_FILE", "data/fetch/phoenix/checkpoint.json")
+    )
+    phoenix_fetch_batch_size: int = int(os.getenv("PHOENIX_FETCH_BATCH_SIZE", "200"))
+    phoenix_fetch_span_kind: str = os.getenv("PHOENIX_FETCH_SPAN_KIND", "CHAIN")
     server_host: str = os.getenv("RAGBOT_HOST", "127.0.0.1")
     server_port: int = int(os.getenv("RAGBOT_PORT", "8000"))
     server_reload: bool = os.getenv("RAGBOT_RELOAD", "false").lower() in {"true", "1", "yes"}
@@ -38,6 +45,8 @@ class Settings:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.index_dir.mkdir(parents=True, exist_ok=True)
+        self.phoenix_fetch_output_dir.mkdir(parents=True, exist_ok=True)
+        self.phoenix_fetch_checkpoint_file.parent.mkdir(parents=True, exist_ok=True)
 
 
 def get_settings() -> Settings:
