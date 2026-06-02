@@ -14,14 +14,21 @@ span annotations back into Phoenix so they can be filtered directly in the UI.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
-from phoenix.client import Client
 
+from data_fetch.fetch_from_phoenix import (
+	build_default_adapter,
+	fetch_phoenix_spans_dataframe,
+	log_phoenix_span_annotations,
+	RawSpansDataFrameRequest,
+	PhoenixAdapter,
+)
 from ragbot.evaluations import correctness, groundedness, relevance, safety
 from ragbot.evaluations.runner import EvaluationRunner
 
@@ -38,32 +45,47 @@ PASS_LABELS = {
 
 INPUT_CANDIDATES = (
 	"input",
+	"input.value",
+	"input.text",
+	"input.message",
+	"input.messages",
 	"input_text",
 	"question",
 	"query",
 	"prompt",
 	"message",
 	"user_message",
+	"llm.input_messages",
+	"llm.prompts",
 	"span_name",
 	"name",
 )
 
 OUTPUT_CANDIDATES = (
 	"output",
+	"output.value",
+	"output.text",
+	"output.message",
+	"output.messages",
 	"response",
 	"response_text",
 	"answer",
 	"completion",
 	"content",
+	"llm.output_messages",
+	"llm.completions",
 )
 
 REFERENCE_CANDIDATES = (
 	"reference",
 	"context",
+	"context.value",
 	"retrieved_context",
 	"source_context",
 	"documents",
 	"retrieved_docs",
+	"retrieval.documents",
+	"retrieval.documents.document.content",
 )
 
 
@@ -93,7 +115,15 @@ def _coerce_text(value: Any) -> str:
 	if value is None:
 		return ""
 	if isinstance(value, str):
-		return value.strip()
+		text = value.strip()
+		if not text:
+			return ""
+		if text[0] in {"{", "["}:
+			try:
+				return _coerce_text(json.loads(text))
+			except json.JSONDecodeError:
+				return text
+		return text
 	if isinstance(value, dict):
 		return "\n\n".join(
 			part
@@ -109,14 +139,17 @@ def _first_non_empty(record: dict[str, Any], keys: tuple[str, ...]) -> str:
 	attributes = record.get("attributes") if isinstance(record.get("attributes"), dict) else {}
 
 	def lookup(source: dict[str, Any], key: str) -> Any:
-		if key in source:
-			return source.get(key)
-		dotted = key.replace("_", ".")
-		if dotted in source:
-			return source.get(dotted)
-		underscored = key.replace(".", "_")
-		if underscored in source:
-			return source.get(underscored)
+		candidates = (
+			key,
+			key.replace("_", "."),
+			key.replace(".", "_"),
+			f"attributes.{key}",
+			f"attributes.{key.replace('_', '.')}",
+			f"attributes.{key.replace('.', '_')}",
+		)
+		for candidate in candidates:
+			if candidate in source:
+				return source.get(candidate)
 		return None
 
 	for key in keys:
@@ -139,6 +172,10 @@ def _span_kind(record: dict[str, Any]) -> str:
 		record.get("kind"),
 		record.get("spanKind"),
 		record.get("span_kind_name"),
+		record.get("openinference.span.kind"),
+		record.get("attributes.openinference.span.kind"),
+		record.get("attributes.span.kind"),
+		record.get("attributes.span_kind"),
 		attributes.get("openinference.span.kind") if attributes else None,
 		attributes.get("span.kind") if attributes else None,
 		attributes.get("span_kind") if attributes else None,
@@ -153,6 +190,7 @@ def _span_kind(record: dict[str, Any]) -> str:
 def _ensure_span_id(record: dict[str, Any], fallback_index: int) -> str:
 	span_id = _coerce_text(
 		record.get("span_id")
+		or record.get("context.span_id")
 		or record.get("spanId")
 		or record.get("id")
 		or record.get("span_uuid")
@@ -166,15 +204,20 @@ def _build_evaluation_frame(spans_df: pd.DataFrame, span_kind: str | None = None
 	normalized = spans_df.copy()
 
 	if "span_id" not in normalized.columns:
-		normalized = normalized.reset_index()
-		if "span_id" not in normalized.columns and "index" in normalized.columns:
-			normalized = normalized.rename(columns={"index": "span_id"})
+		if "context.span_id" in normalized.columns:
+			normalized["span_id"] = normalized["context.span_id"]
+		else:
+			index_name = normalized.index.name or "index"
+			index_column = index_name if index_name not in normalized.columns else "__index_span_id"
+			normalized = normalized.reset_index(names=index_column)
+			if "span_id" not in normalized.columns:
+				normalized = normalized.rename(columns={index_column: "span_id"})
 
 	rows: list[dict[str, Any]] = []
 	for index, (_, series) in enumerate(normalized.iterrows()):
 		record = series.to_dict()
 		record_span_kind = _span_kind(record)
-		if span_kind and record_span_kind and record_span_kind != span_kind.upper():
+		if span_kind and record_span_kind != span_kind.upper():
 			continue
 
 		span_id = _coerce_text(record.get("span_id")) or _ensure_span_id(record, index)
@@ -285,6 +328,8 @@ class BatchEvaluationConfig:
 	root_spans_only: bool | None = None
 	phoenix_base_url: str = _default_phoenix_base_url()
 	sync_annotations: bool = True
+	save_annotations: bool = True
+	adapter: PhoenixAdapter | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,13 +352,16 @@ class BatchEvaluationResult:
 async def evaluate_span_batch(config: BatchEvaluationConfig) -> BatchEvaluationResult:
 	"""Pull Phoenix spans, evaluate them, and write the annotations back."""
 
-	client = Client(base_url=config.phoenix_base_url)
-	spans_df = client.spans.get_spans_dataframe(
-		start_time=_normalize_datetime(config.from_time),
-		end_time=_normalize_datetime(config.to_time),
-		limit=config.limit,
-		root_spans_only=config.root_spans_only,
-		project_name=config.project_name,
+	adapter = config.adapter or build_default_adapter(config.phoenix_base_url)
+	spans_df = fetch_phoenix_spans_dataframe(
+		RawSpansDataFrameRequest(
+			from_time=_normalize_datetime(config.from_time),
+			to_time=_normalize_datetime(config.to_time),
+			limit=config.limit,
+			root_spans_only=config.root_spans_only,
+			project_name=config.project_name,
+		),
+		adapter,
 	)
 
 	if spans_df.empty:
@@ -327,20 +375,21 @@ async def evaluate_span_batch(config: BatchEvaluationConfig) -> BatchEvaluationR
 		annotations_df = pd.DataFrame(
 			columns=["span_id", "annotation_name", "annotator_kind", "label", "score", "explanation", "metadata"]
 		)
-		return BatchEvaluationResult(spans_df=spans_df, evaluation_df=evaluation_df, annotations_df=annotations_df)
+		return BatchEvaluationResult(spans_df=evaluation_df, evaluation_df=evaluation_df, annotations_df=annotations_df)
 
 	runner = _build_runner()
 	scored_df = await runner.evaluate_dataframe(evaluation_df)
 	annotations_df = _build_annotations_frame(scored_df)
 
-	if not annotations_df.empty:
-		client.spans.log_span_annotations_dataframe(
-			dataframe=annotations_df,
+	if config.save_annotations:
+		log_phoenix_span_annotations(
+			annotations_df,
+			adapter,
 			sync=config.sync_annotations,
 		)
 
 	return BatchEvaluationResult(
-		spans_df=spans_df,
+		spans_df=evaluation_df,
 		evaluation_df=scored_df,
 		annotations_df=annotations_df,
 	)

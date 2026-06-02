@@ -1,10 +1,53 @@
-
 from __future__ import annotations
 
+import json
+from datetime import datetime
+from typing import Any
+
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+from data_fetch.fetch_from_phoenix import (
+    build_default_adapter,
+    fetch_phoenix_spans_dataframe,
+    RawSpansDataFrameRequest,
+)
 from ragbot.config import get_settings
+from ragbot.evaluations.batch_evaluation.evaluate_batch import (
+    BatchEvaluationConfig,
+    run_span_batch,
+)
 from ragbot.schemas import ChatRequest, ChatResponse, IngestRequest, IngestResponse
 from ragbot.service import ChatService
+
+
+class RawSpansDataFrameResponse(BaseModel):
+    columns: list[str]
+    row_count: int
+    rows: list[dict[str, Any]]
+
+
+class BatchEvaluationRunRequest(BaseModel):
+    from_time: datetime | None = None
+    to_time: datetime | None = None
+    project_name: str | None = None
+    span_kind: str | None = None
+    limit: int = Field(default=1000, ge=1)
+    root_spans_only: bool | None = None
+    sync_annotations: bool = True
+    save_annotations: bool = True
+
+
+class BatchEvaluationRunResponse(BaseModel):
+    span_count: int
+    evaluated_count: int
+    annotation_count: int
+    annotations_saved: bool
+
+
+def _dataframe_to_rows(dataframe) -> list[dict[str, Any]]:
+    if dataframe.empty:
+        return []
+    return json.loads(dataframe.to_json(orient="records", date_format="iso"))
 
 
 def create_app() -> FastAPI:
@@ -75,6 +118,55 @@ def create_app() -> FastAPI:
             return ChatResponse.model_validate(result)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/phoenix/spans/raw", response_model=RawSpansDataFrameResponse)
+    def fetch_raw_phoenix_spans(request: RawSpansDataFrameRequest) -> RawSpansDataFrameResponse:
+        """Fetch raw Phoenix spans as DataFrame-shaped JSON."""
+        try:
+            adapter = build_default_adapter(settings.phoenix_query_endpoint)
+            spans_df = fetch_phoenix_spans_dataframe(
+                RawSpansDataFrameRequest(
+                    from_time=request.from_time,
+                    to_time=request.to_time,
+                    project_name=request.project_name or settings.phoenix_project_name,
+                    limit=request.limit,
+                    root_spans_only=request.root_spans_only,
+                ),
+                adapter,
+            )
+            return RawSpansDataFrameResponse(
+                columns=[str(column) for column in spans_df.columns],
+                row_count=int(len(spans_df)),
+                rows=_dataframe_to_rows(spans_df),
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.post("/evaluations/batch/run", response_model=BatchEvaluationRunResponse)
+    def run_batch_evaluation(request: BatchEvaluationRunRequest) -> BatchEvaluationRunResponse:
+        """Run Phoenix span evaluations and optionally write annotations back."""
+        try:
+            result = run_span_batch(
+                BatchEvaluationConfig(
+                    from_time=request.from_time,
+                    to_time=request.to_time,
+                    project_name=request.project_name or settings.phoenix_project_name,
+                    span_kind=request.span_kind or settings.phoenix_fetch_span_kind,
+                    limit=request.limit,
+                    root_spans_only=request.root_spans_only,
+                    phoenix_base_url=settings.phoenix_query_endpoint,
+                    sync_annotations=request.sync_annotations,
+                    save_annotations=request.save_annotations,
+                )
+            )
+            return BatchEvaluationRunResponse(
+                span_count=result.span_count,
+                evaluated_count=int(len(result.evaluation_df)),
+                annotation_count=result.annotation_count,
+                annotations_saved=request.save_annotations and result.annotation_count > 0,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return app
 

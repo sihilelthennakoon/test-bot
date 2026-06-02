@@ -3,12 +3,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pandas as pd
+
 from data_fetch.fetch_from_phoenix import (
     FetchCheckpoint,
     FetchRequest,
     FetchSummary,
     PhoenixAdapter,
+    RawSpansDataFrameRequest,
     fetch_phoenix_traces_and_spans,
+    fetch_phoenix_spans_dataframe,
     parse_datetime,
     save_checkpoint,
 )
@@ -39,6 +43,66 @@ class FakePhoenixAdapter(PhoenixAdapter):
         batch_size,
     ) -> list[dict]:
         return self._spans_by_trace.get(trace_id, [])[:batch_size]
+
+    def fetch_spans_dataframe(
+        self,
+        *,
+        from_time,
+        to_time,
+        project_name,
+        limit,
+        root_spans_only,
+    ) -> pd.DataFrame:
+        rows = [
+            span
+            for spans in self._spans_by_trace.values()
+            for span in spans
+        ]
+        return pd.DataFrame(rows[:limit])
+
+    def log_span_annotations_dataframe(
+        self,
+        *,
+        annotations_df,
+        sync,
+    ) -> None:
+        self.annotations_df = annotations_df
+        self.sync_annotations = sync
+
+
+def test_fetch_raw_spans_dataframe_uses_adapter() -> None:
+    adapter = FakePhoenixAdapter(
+        traces=[],
+        spans_by_trace={
+            "t1": [
+                {
+                    "span_id": "s1",
+                    "trace_id": "t1",
+                    "input": "What is Paris?",
+                    "output": "A city.",
+                }
+            ]
+        },
+    )
+
+    spans_df = fetch_phoenix_spans_dataframe(
+        RawSpansDataFrameRequest(
+            from_time=parse_datetime("2026-06-01T09:00:00Z"),
+            to_time=parse_datetime("2026-06-01T10:00:00Z"),
+            project_name="test-bot-with-eval",
+            limit=10,
+        ),
+        adapter,
+    )
+
+    assert spans_df.to_dict(orient="records") == [
+        {
+            "span_id": "s1",
+            "trace_id": "t1",
+            "input": "What is Paris?",
+            "output": "A city.",
+        }
+    ]
 
 def test_fetch_filters_chain_spans_and_writes_jsonl(tmp_path: Path) -> None:
     request = FetchRequest(

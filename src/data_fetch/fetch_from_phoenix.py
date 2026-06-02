@@ -8,6 +8,7 @@ import tempfile
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
+import pandas as pd
 from pydantic import BaseModel, Field
 
 from ragbot.schemas import new_id, utc_now
@@ -109,6 +110,14 @@ class FetchSummary(BaseModel):
     checkpoint: FetchCheckpoint
 
 
+class RawSpansDataFrameRequest(BaseModel):
+    from_time: datetime | None = None
+    to_time: datetime | None = None
+    project_name: str | None = None
+    limit: int = Field(default=1000, ge=1)
+    root_spans_only: bool | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class FetchRequest:
     from_time: datetime | None
@@ -142,6 +151,25 @@ class PhoenixAdapter(Protocol):
         project_name: str | None,
         batch_size: int,
     ) -> list[dict[str, Any]]:
+        ...
+
+    def fetch_spans_dataframe(
+        self,
+        *,
+        from_time: datetime | None,
+        to_time: datetime | None,
+        project_name: str | None,
+        limit: int,
+        root_spans_only: bool | None,
+    ) -> pd.DataFrame:
+        ...
+
+    def log_span_annotations_dataframe(
+        self,
+        *,
+        annotations_df: pd.DataFrame,
+        sync: bool,
+    ) -> None:
         ...
 
 
@@ -251,6 +279,43 @@ class PhoenixSdkAdapter:
             },
         )
         return self._to_records(payload)
+
+    def fetch_spans_dataframe(
+        self,
+        *,
+        from_time: datetime | None,
+        to_time: datetime | None,
+        project_name: str | None,
+        limit: int,
+        root_spans_only: bool | None,
+    ) -> pd.DataFrame:
+        payload = self._call_with_supported_kwargs(
+            self._client.spans.get_spans_dataframe,
+            {
+                "start_time": from_time,
+                "end_time": to_time,
+                "limit": limit,
+                "root_spans_only": root_spans_only,
+                "project_name": project_name,
+            },
+        )
+        if isinstance(payload, pd.DataFrame):
+            return payload
+        return pd.DataFrame(self._to_records(payload))
+
+    def log_span_annotations_dataframe(
+        self,
+        *,
+        annotations_df: pd.DataFrame,
+        sync: bool,
+    ) -> None:
+        self._call_with_supported_kwargs(
+            self._client.spans.log_span_annotations_dataframe,
+            {
+                "dataframe": annotations_df,
+                "sync": sync,
+            },
+        )
 
 
 def load_checkpoint(path: Path) -> FetchCheckpoint:
@@ -471,6 +536,47 @@ def make_fetch_request(
         delta=delta,
         update_checkpoint=update_checkpoint,
     )
+
+
+def make_raw_spans_dataframe_request(
+    *,
+    from_time: str | datetime | None,
+    to_time: str | datetime | None,
+    project_name: str | None,
+    limit: int,
+    root_spans_only: bool | None,
+) -> RawSpansDataFrameRequest:
+    return RawSpansDataFrameRequest(
+        from_time=_ensure_datetime(from_time),
+        to_time=_ensure_datetime(to_time),
+        project_name=project_name,
+        limit=limit,
+        root_spans_only=root_spans_only,
+    )
+
+
+def fetch_phoenix_spans_dataframe(
+    request: RawSpansDataFrameRequest,
+    adapter: PhoenixAdapter,
+) -> pd.DataFrame:
+    return adapter.fetch_spans_dataframe(
+        from_time=request.from_time,
+        to_time=request.to_time,
+        project_name=request.project_name,
+        limit=request.limit,
+        root_spans_only=request.root_spans_only,
+    )
+
+
+def log_phoenix_span_annotations(
+    annotations_df: pd.DataFrame,
+    adapter: PhoenixAdapter,
+    *,
+    sync: bool = True,
+) -> None:
+    if annotations_df.empty:
+        return
+    adapter.log_span_annotations_dataframe(annotations_df=annotations_df, sync=sync)
 
 
 def build_default_adapter(phoenix_query_endpoint: str) -> PhoenixAdapter:
