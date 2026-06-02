@@ -1,0 +1,86 @@
+{
+  "fetched_at": "2026-05-27T06:13:24.564910Z",
+  "source": "phoenix.traces",
+  "project_name": "ragbot",
+  "filters": {
+    "project_name": "ragbot",
+    "start_time": null,
+    "end_time": null,
+    "trace_id": null,
+    "conversation_id": "conv-1",
+    "limit": 50,
+    "cursor": null
+  },
+  "trace_count": 1,
+  "traces": [
+    {
+      "trace_id": "trace-1",
+      "project_name": "ragbot",
+      "conversation_id": "conv-1",
+      "root_span_id": "s1",
+      "root_span_name": "root",
+      "status_code": null,
+      "start_time": null,
+      "end_time": null,
+      "duration_ms": null,
+      "span_count": 1,
+      "spans": [
+        {
+          "span_id": "s1",
+          "trace_id": "trace-1",
+          "parent_span_id": null,
+          "name": "root",
+          "span_kind": null,
+          "status_code": null,
+          "start_time": null,
+          "end_time": null,
+          "duration_ms": null,
+          "attributes": {
+            "session.id": "conv-1"
+          },
+          "raw": {
+            "span_id": "s1",
+            "trace_id": "trace-1",
+            "name": "root",
+            "attributes": {
+              "session.id": "conv-1"
+            }
+          }
+        }
+      ],
+      "raw": {
+        "trace_id": "trace-1",
+        "spans": [
+          {
+            "span_id": "s1",
+            "trace_id": "trace-1",
+            "name": "root",
+            "attributes": {
+              "session.id": "conv-1"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "next_cursor": "abc",
+  "snapshot_path": null,
+  "raw_payload": {
+    "data": [
+      {
+        "trace_id": "trace-1",
+        "spans": [
+          {
+            "span_id": "s1",
+            "trace_id": "trace-1",
+            "name": "root",
+            "attributes": {
+              "session.id": "conv-1"
+            }
+          }
+        ]
+      }
+    ],
+    "next_cursor": "abc"
+  }
+}

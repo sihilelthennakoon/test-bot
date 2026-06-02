@@ -15,6 +15,7 @@ from ragbot.graph.chat_graph import ChatRuntime, build_chat_app
 from ragbot.ingestion.ingest import IngestionService
 from ragbot.llm.gemini import GeminiAnswerer
 from ragbot.observability import bootstrap_phoenix
+from ragbot.rca.service import RCATraceService
 from ragbot.safety.guardrails import GuardrailEngine
 from ragbot.safety.pii import PIIMasker
 from ragbot.vectorstore.faiss_store import FaissVectorStore
@@ -38,6 +39,7 @@ class ChatService:
     store: FaissVectorStore
     runtime: ChatRuntime
     ingestion: IngestionService
+    rca: RCATraceService
     chat_app: Any
 
     @classmethod
@@ -61,8 +63,16 @@ class ChatService:
             evaluator_runner=evaluator_runner,
         )
         ingestion = IngestionService(store=store, pii_masker=PIIMasker())
+        rca = RCATraceService.from_settings(settings)
         chat_app = build_chat_app(runtime, settings=settings)
-        return cls(settings=settings, store=store, runtime=runtime, ingestion=ingestion, chat_app=chat_app)
+        return cls(
+            settings=settings,
+            store=store,
+            runtime=runtime,
+            ingestion=ingestion,
+            rca=rca,
+            chat_app=chat_app,
+        )
 
     def build_app(self):
         return self.chat_app
@@ -71,6 +81,8 @@ class ChatService:
         return {
             "metadata": {
                 "conversation_id": conversation_id,
+                "session_id": conversation_id,
+                "session_identifier": conversation_id,
                 "environment": self.settings.environment,
                 "app_version": self.settings.app_version,
                 "use_case": self.settings.use_case,

@@ -96,6 +96,8 @@ def test_chat_service_builds_invocation_metadata(monkeypatch) -> None:
     assert config == {
         "metadata": {
             "conversation_id": "conv-123",
+            "session_id": "conv-123",
+            "session_identifier": "conv-123",
             "environment": service.settings.environment,
             "app_version": service.settings.app_version,
             "use_case": service.settings.use_case,

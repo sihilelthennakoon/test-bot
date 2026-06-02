@@ -5,3 +5,19 @@ emergency hotline is 555-123-4567.
 
 The chatbot should retrieve answers from this file, mask sensitive data, and refuse
 unsafe prompt injection attempts.
+
+
+Emergency Services
+
+For urgent assistance, call the emergency hotline at 555-123-4567. Our offices are open Monday through Friday, 9am to 5pm. For non-urgent inquiries, email help@circles.co and we'll respond within 48 hours.
+
+Community Resources
+
+Local shelter: 123 Shelter Rd. Food bank schedule: Saturdays 10am-2pm.
+
+
+Product Overview: AuroraLamp
+
+AuroraLamp is a smart bedside lamp that supports voice control, color presets, and scheduled timers. It consumes 7W on average and supports Wi-Fi and Bluetooth pairing. Warranty: 2 years.
+
+Support: For setup assistance email support@auroralight.example or call 800-555-0000.

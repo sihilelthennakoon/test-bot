@@ -3,10 +3,28 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import os
+from urllib.parse import urlparse, urlunparse
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+def normalize_phoenix_collector_endpoint(collector_endpoint: str) -> str:
+    parsed = urlparse(collector_endpoint)
+    if not parsed.scheme or not parsed.netloc:
+        return collector_endpoint
+    path = parsed.path.rstrip("/")
+    if not path:
+        path = "/v1/traces"
+    return urlunparse(parsed._replace(path=path))
+
+
+def derive_phoenix_pull_base_url(collector_endpoint: str) -> str:
+    parsed = urlparse(collector_endpoint)
+    if not parsed.scheme or not parsed.netloc:
+        return collector_endpoint.rstrip("/")
+    return urlunparse(parsed._replace(path="", params="", query="", fragment="")).rstrip("/")
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +48,11 @@ class Settings:
     retrieval_top_k: int = int(os.getenv("RAGBOT_RETRIEVAL_TOP_K", "4"))
     phoenix_project_name: str = os.getenv("PHOENIX_PROJECT_NAME", "test-bot-with-eval")
     phoenix_collector_endpoint: str = os.getenv("PHOENIX_COLLECTOR_ENDPOINT", "http://localhost:6006")
+    phoenix_pull_base_url: str = os.getenv(
+        "RAGBOT_PHOENIX_PULL_BASE_URL",
+        derive_phoenix_pull_base_url(os.getenv("PHOENIX_COLLECTOR_ENDPOINT", "http://localhost:6006")),
+    )
+    rca_pull_save_dir: Path = Path(os.getenv("RAGBOT_RCA_PULL_SAVE_DIR", "src/ragbot/rca/pulls"))
     server_host: str = os.getenv("RAGBOT_HOST", "127.0.0.1")
     server_port: int = int(os.getenv("RAGBOT_PORT", "8000"))
     server_reload: bool = os.getenv("RAGBOT_RELOAD", "false").lower() in {"true", "1", "yes"}
@@ -38,6 +61,7 @@ class Settings:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.index_dir.mkdir(parents=True, exist_ok=True)
+        self.rca_pull_save_dir.mkdir(parents=True, exist_ok=True)
 
 
 def get_settings() -> Settings:

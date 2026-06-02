@@ -1,8 +1,12 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
+from datetime import datetime
+
+from fastapi import FastAPI, HTTPException, Query
 from ragbot.config import get_settings
+from ragbot.rca.phoenix_client import PhoenixClientError
+from ragbot.rca.models import PhoenixTracePullResult
 from ragbot.schemas import ChatRequest, ChatResponse, IngestRequest, IngestResponse
 from ragbot.service import ChatService
 
@@ -75,6 +79,29 @@ def create_app() -> FastAPI:
             return ChatResponse.model_validate(result)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/rca/traces/pull", response_model=PhoenixTracePullResult)
+    def pull_rca_traces(
+        project_name: str | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        trace_id: str | None = None,
+        conversation_id: str | None = None,
+        limit: int = Query(default=50, ge=1, le=500),
+        cursor: str | None = None,
+    ) -> PhoenixTracePullResult:
+        try:
+            return service.rca.pull_traces(
+                project_name=project_name,
+                start_time=start_time,
+                end_time=end_time,
+                trace_id=trace_id,
+                conversation_id=conversation_id,
+                limit=limit,
+                cursor=cursor,
+            )
+        except PhoenixClientError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return app
 
