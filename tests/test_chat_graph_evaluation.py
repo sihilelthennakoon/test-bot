@@ -126,12 +126,13 @@ class FakeAnswerer:
 
 
 def test_run_populates_pipeline_response_attributes() -> None:
+    runner = FakeEvaluationRunner()
     runtime = ChatRuntime(
         store=FakeStore(),
         answerer=FakeAnswerer(),
         pii_masker=PIIMasker(),
         guardrails=GuardrailEngine(),
-        evaluator_runner=FakeEvaluationRunner(),
+        evaluator_runner=runner,
     )
 
     response = asyncio.run(
@@ -148,6 +149,7 @@ def test_run_populates_pipeline_response_attributes() -> None:
     assert response.input_safety.warnings == ["PII was masked before retrieval."]
     assert response.output_safety.warnings == []
     assert response.sources and response.sources[0].source_path == "docs/example.txt"
+    assert runner.enabled_seen_by_evaluate == []
 
 
 def test_chat_graph_app_forwards_config_and_wraps_response() -> None:
