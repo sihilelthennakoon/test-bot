@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import asyncio
-import time
 from typing import TYPE_CHECKING, Any
 
 from ragbot.llm.gemini import GeminiAnswerer
@@ -45,7 +44,6 @@ class ChatRuntime:
     _evaluation_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
     async def run(self, message: str, *, top_k: int = 4, conversation_id: str | None = None) -> ChatResponse:
-        started_at = time.perf_counter()
         input_decision = self.guardrails.check_input(message)
         masked_message = self.pii_masker.mask(message)
 
@@ -78,16 +76,6 @@ class ChatRuntime:
             warnings=output_decision.warnings + (["PII was masked in the answer."] if masked_output.was_masked else []),
             masked_text=final_output,
         )
-
-        elapsed_ms = (time.perf_counter() - started_at) * 1000
-        if self.evaluator_runner:
-            await self.evaluate_specific_step(
-                step_name="request",
-                evaluators=["latency"],
-                input_text=masked_message.text,
-                response_text=final_output,
-                duration_ms=elapsed_ms,
-            )
 
         return ChatResponse(
             answer=final_output,
@@ -258,29 +246,10 @@ def build_chat_app(runtime: ChatRuntime, *, settings: Any | None = None):
         context = state.get("context", runtime._build_context(state.get("sources", [])))
         answer = runtime.answerer.generate(state["message"], context)
         state["answer"] = answer
-        if runtime.evaluator_runner:
-            asyncio.run(
-                runtime.evaluate_specific_step(
-                    step_name="generate",
-                    evaluators=["correctness", "relevance", "groundedness", "format"],
-                    input_text=state["message"],
-                    response_text=answer,
-                    context=context,
-                    reference=context,
-                )
-            )
         return state
 
     def output_guardrail_node(state: dict[str, Any]) -> dict[str, Any]:
         state["output_decision"] = runtime.guardrails.check_output(state.get("answer", ""), has_sources=bool(state.get("sources")))
-        if runtime.evaluator_runner:
-            asyncio.run(
-                runtime.evaluate_specific_step(
-                    step_name="output_guardrails",
-                    evaluators=["safety"],
-                    response_text=state.get("answer", ""),
-                )
-            )
         return state
 
     def pii_mask_output_node(state: dict[str, Any]) -> dict[str, Any]:

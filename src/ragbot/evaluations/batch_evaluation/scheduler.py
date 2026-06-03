@@ -8,7 +8,7 @@ from ragbot.evaluations.batch_evaluation.evaluate_batch import (
     run_span_batch,
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 
 class BatchEvaluationScheduler:
@@ -29,6 +29,13 @@ class BatchEvaluationScheduler:
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop_event.clear()
+        logger.info(
+            "Starting batch evaluation cron: next_run_in_seconds=%s project=%s span_kind=%s limit=%s",
+            self.interval_seconds,
+            self.config.project_name,
+            self.config.span_kind,
+            self.config.limit,
+        )
         self._thread = threading.Thread(
             target=self._run_loop,
             name="batch-evaluation-scheduler",
@@ -40,10 +47,12 @@ class BatchEvaluationScheduler:
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=5)
+        logger.info("Stopped batch evaluation cron")
 
     def _run_loop(self) -> None:
         while not self._stop_event.wait(self.interval_seconds):
             try:
+                logger.info("Batch evaluation cron run started")
                 result = run_span_batch(self.config)
                 logger.info(
                     "Batch evaluation cron completed: spans=%s evaluated=%s annotations=%s",
