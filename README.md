@@ -271,9 +271,16 @@ Open http://localhost:8000/docs in your browser to explore endpoints interactive
 | `PHOENIX_FETCH_CHECKPOINT_FILE` | `data/fetch/phoenix/checkpoint.json` | Local incremental checkpoint file |
 | `PHOENIX_FETCH_BATCH_SIZE` | `200` | Max traces/spans fetched per adapter call |
 | `PHOENIX_FETCH_SPAN_KIND` | `CHAIN` | Default span kind filter for fetch worker |
+| `BATCH_EVALUATION_CRON_ENABLED` | `true` | Start the hourly batch evaluation scheduler with the API server |
+| `BATCH_EVALUATION_CRON_INTERVAL_SECONDS` | `3600` | Batch evaluation scheduler interval |
+| `BATCH_EVALUATION_CRON_LIMIT` | `1000` | Max Phoenix spans fetched per scheduled batch |
+| `BATCH_EVALUATION_CRON_SYNC_ANNOTATIONS` | `true` | Wait for scheduled annotation writes to sync |
+| `BATCH_EVALUATION_CRON_SAVE_ANNOTATIONS` | `true` | Write scheduled evaluation annotations back to Phoenix |
 | `RAGBOT_HOST` | `127.0.0.1` | API server host |
 | `RAGBOT_PORT` | `8000` | API server port |
 | `RAGBOT_RELOAD` | `false` | Enable hot-reload (dev only) |
+
+When the API server starts, the batch evaluation scheduler runs on a daemon thread. It waits one interval, then evaluates `PHOENIX_FETCH_SPAN_KIND` spans and saves annotations to Phoenix.
 
 ## Testing
 

@@ -37,6 +37,19 @@ class Settings:
     )
     phoenix_fetch_batch_size: int = int(os.getenv("PHOENIX_FETCH_BATCH_SIZE", "200"))
     phoenix_fetch_span_kind: str = os.getenv("PHOENIX_FETCH_SPAN_KIND", "CHAIN")
+    batch_evaluation_cron_enabled: bool = os.getenv("BATCH_EVALUATION_CRON_ENABLED", "true").lower() in {
+        "true",
+        "1",
+        "yes",
+    }
+    batch_evaluation_cron_interval_seconds: int = int(os.getenv("BATCH_EVALUATION_CRON_INTERVAL_SECONDS", "3600"))
+    batch_evaluation_cron_limit: int = int(os.getenv("BATCH_EVALUATION_CRON_LIMIT", "1000"))
+    batch_evaluation_cron_sync_annotations: bool = os.getenv(
+        "BATCH_EVALUATION_CRON_SYNC_ANNOTATIONS", "true"
+    ).lower() in {"true", "1", "yes"}
+    batch_evaluation_cron_save_annotations: bool = os.getenv(
+        "BATCH_EVALUATION_CRON_SAVE_ANNOTATIONS", "true"
+    ).lower() in {"true", "1", "yes"}
     server_host: str = os.getenv("RAGBOT_HOST", "127.0.0.1")
     server_port: int = int(os.getenv("RAGBOT_PORT", "8000"))
     server_reload: bool = os.getenv("RAGBOT_RELOAD", "false").lower() in {"true", "1", "yes"}

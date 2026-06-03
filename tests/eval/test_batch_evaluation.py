@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 import pandas as pd
 
 from ragbot.evaluations.batch_evaluation import evaluate_batch
@@ -8,6 +10,7 @@ from ragbot.evaluations.batch_evaluation.evaluate_batch import (
     _build_evaluation_frame,
     run_span_batch,
 )
+from ragbot.evaluations.batch_evaluation.scheduler import BatchEvaluationScheduler
 
 
 class FakePhoenixAdapter:
@@ -203,3 +206,32 @@ def test_build_evaluation_frame_extracts_openinference_flattened_columns() -> No
     assert "What is the capital of France?" in row["input"]
     assert "Paris is the capital of France." in row["output"]
     assert "France's capital is Paris." in row["reference"]
+
+
+def test_batch_evaluation_scheduler_runs_on_background_thread(monkeypatch) -> None:
+    ran = threading.Event()
+    thread_names: list[str] = []
+
+    def fake_run_span_batch(config):
+        thread_names.append(threading.current_thread().name)
+        ran.set()
+        return FakeEvaluationRunnerResult()
+
+    class FakeEvaluationRunnerResult:
+        span_count = 1
+        annotation_count = 4
+        evaluation_df = pd.DataFrame([{"span_id": "s1"}])
+
+    monkeypatch.setattr(
+        "ragbot.evaluations.batch_evaluation.scheduler.run_span_batch",
+        fake_run_span_batch,
+    )
+    scheduler = BatchEvaluationScheduler(config=BatchEvaluationConfig(), interval_seconds=1)
+
+    scheduler.start()
+    try:
+        assert ran.wait(timeout=2)
+    finally:
+        scheduler.stop()
+
+    assert thread_names == ["batch-evaluation-scheduler"]

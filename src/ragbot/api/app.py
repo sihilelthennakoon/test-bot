@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import json
 from datetime import datetime
 from typing import Any
@@ -16,6 +17,7 @@ from ragbot.evaluations.batch_evaluation.evaluate_batch import (
     BatchEvaluationConfig,
     run_span_batch,
 )
+from ragbot.evaluations.batch_evaluation.scheduler import BatchEvaluationScheduler
 from ragbot.schemas import ChatRequest, ChatResponse, IngestRequest, IngestResponse
 from ragbot.service import ChatService
 
@@ -53,6 +55,32 @@ def _dataframe_to_rows(dataframe) -> list[dict[str, Any]]:
 def create_app() -> FastAPI:
     settings = get_settings()
     service = ChatService.create(settings)
+    scheduler = (
+        BatchEvaluationScheduler(
+            config=BatchEvaluationConfig(
+                project_name=settings.phoenix_project_name,
+                span_kind=settings.phoenix_fetch_span_kind,
+                limit=settings.batch_evaluation_cron_limit,
+                phoenix_base_url=settings.phoenix_query_endpoint,
+                sync_annotations=settings.batch_evaluation_cron_sync_annotations,
+                save_annotations=settings.batch_evaluation_cron_save_annotations,
+            ),
+            interval_seconds=settings.batch_evaluation_cron_interval_seconds,
+        )
+        if settings.batch_evaluation_cron_enabled
+        else None
+    )
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        if scheduler is not None:
+            scheduler.start()
+        try:
+            yield
+        finally:
+            if scheduler is not None:
+                scheduler.stop()
+
     app = FastAPI(
         title=settings.project_name,
         version="0.1.0",
@@ -60,6 +88,7 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
+        lifespan=lifespan,
     )
 
     @app.get("/health")
