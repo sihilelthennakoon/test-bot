@@ -456,7 +456,8 @@ def build_rca_feature_frame(annotation_df: pd.DataFrame, span_df: pd.DataFrame) 
 		return pd.DataFrame(
 			columns=[
 				"span_id",
-				"trace_id",
+				"eval_trace_id",
+				"context_trace_id",
 				"question",
 				"answer",
 				"correctness_score",
@@ -553,7 +554,8 @@ def build_rca_feature_frame(annotation_df: pd.DataFrame, span_df: pd.DataFrame) 
 		rows.append(
 			{
 				"span_id": span_id,
-				"trace_id": annotation_values.get("trace_id") or _coerce_text(record.get("context.trace_id")),
+				"eval_trace_id": annotation_values.get("trace_id"),
+				"context_trace_id": _coerce_text(record.get("context.trace_id")),
 				"question": question,
 				"answer": answer,
 				"correctness_score": annotation_values.get("correctness_score"),
@@ -586,7 +588,8 @@ def build_rca_feature_frame(annotation_df: pd.DataFrame, span_df: pd.DataFrame) 
 		rows,
 		columns=[
 			"span_id",
-			"trace_id",
+			"eval_trace_id",
+			"context_trace_id",
 			"question",
 			"answer",
 			"correctness_score",
