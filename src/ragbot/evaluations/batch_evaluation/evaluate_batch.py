@@ -135,6 +135,36 @@ def _coerce_text(value: Any) -> str:
 	return str(value).strip()
 
 
+def _find_nested_value(value: Any, keys: tuple[str, ...]) -> Any:
+	if value is None:
+		return None
+	if isinstance(value, str):
+		text = value.strip()
+		if not text or text[0] not in {"{", "["}:
+			return None
+		try:
+			return _find_nested_value(json.loads(text), keys)
+		except json.JSONDecodeError:
+			return None
+	if isinstance(value, dict):
+		for key in keys:
+			if key in value:
+				return value[key]
+			alternate = key.replace(".", "_") if "." in key else key.replace("_", ".")
+			if alternate in value:
+				return value[alternate]
+		for item in value.values():
+			found = _find_nested_value(item, keys)
+			if found is not None:
+				return found
+	if isinstance(value, (list, tuple, set)):
+		for item in value:
+			found = _find_nested_value(item, keys)
+			if found is not None:
+				return found
+	return None
+
+
 def _first_non_empty(record: dict[str, Any], keys: tuple[str, ...]) -> str:
 	attributes = record.get("attributes") if isinstance(record.get("attributes"), dict) else {}
 
@@ -159,6 +189,12 @@ def _first_non_empty(record: dict[str, Any], keys: tuple[str, ...]) -> str:
 
 		if attributes:
 			candidate = _coerce_text(lookup(attributes, key))
+			if candidate:
+				return candidate
+
+	for source in (record, attributes):
+		for value in source.values():
+			candidate = _coerce_text(_find_nested_value(value, keys))
 			if candidate:
 				return candidate
 

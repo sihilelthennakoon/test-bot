@@ -20,7 +20,8 @@ class GeminiAnswerer:
         prompt = (
             "You are a careful enterprise RAG assistant.\n"
             "Answer only from the provided context.\n"
-            "If the answer is not present, say you do not know.\n\n"
+            "Try your best to answer the question based on the context, if not found use the context to give something similar but make sure to say it's a similar item.\n"
+            "If the answer is not present and there are nothing similar, say you do not know.\n\n"
             f"Context:\n{context}\n\n"
             f"Question: {question}"
         )
@@ -34,6 +35,5 @@ class GeminiAnswerer:
     def _fallback_answer(self, question: str, context: str) -> str:
         summary = context.strip().splitlines()[0] if context.strip() else "no retrieval context was available"
         return (
-            f"I can answer from the retrieved document context. Question: {question}. "
-            f"Relevant context summary: {summary}"
+            f"Something has gone wrong!"
         )
