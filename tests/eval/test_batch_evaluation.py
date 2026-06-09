@@ -208,6 +208,32 @@ def test_build_evaluation_frame_extracts_openinference_flattened_columns() -> No
     assert "France's capital is Paris." in row["reference"]
 
 
+def test_build_evaluation_frame_extracts_context_from_nested_json_payloads() -> None:
+    spans_df = pd.DataFrame(
+        [
+            {
+                "context.span_id": "s1",
+                "attributes.input.value": (
+                    '{"message": "Tell me about emergency services", '
+                    '"context": "Emergency hotline is 555-123-4567."}'
+                ),
+                "attributes.output.value": (
+                    '{"answer": "Call the emergency hotline at 555-123-4567.", '
+                    '"context": "Emergency hotline is 555-123-4567."}'
+                ),
+                "attributes.openinference.span.kind": "CHAIN",
+            }
+        ]
+    )
+
+    evaluation_df = _build_evaluation_frame(spans_df, span_kind="CHAIN")
+
+    row = evaluation_df.iloc[0]
+    assert "Tell me about emergency services" in row["input"]
+    assert "Call the emergency hotline" in row["output"]
+    assert row["reference"] == "Emergency hotline is 555-123-4567."
+
+
 def test_batch_evaluation_scheduler_runs_on_background_thread(monkeypatch) -> None:
     ran = threading.Event()
     thread_names: list[str] = []
