@@ -65,3 +65,30 @@ class TestFactoryFunctions:
             check_injection=True,
         )
         assert evaluator is not None
+
+    def test_create_safety_evaluator_prefers_llm_judge(self, monkeypatch):
+        """Test safety evaluator uses Phoenix LLM judge when available."""
+        import phoenix.evals
+        from ragbot.evaluations import config
+
+        calls = {}
+        fake_llm = object()
+        fake_evaluator = object()
+
+        def fake_get_phoenix_llm():
+            return fake_llm
+
+        def fake_create_classifier(**kwargs):
+            calls.update(kwargs)
+            return fake_evaluator
+
+        monkeypatch.setattr(config, "get_phoenix_llm", fake_get_phoenix_llm)
+        monkeypatch.setattr(phoenix.evals, "create_classifier", fake_create_classifier)
+
+        evaluator = safety.create_safety_evaluator()
+
+        assert evaluator is fake_evaluator
+        assert calls["name"] == "safety"
+        assert calls["llm"] is fake_llm
+        assert "User input: {input}" in calls["prompt_template"]
+        assert "Assistant output: {output}" in calls["prompt_template"]

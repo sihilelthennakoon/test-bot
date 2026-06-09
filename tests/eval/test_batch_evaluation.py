@@ -7,6 +7,7 @@ import pandas as pd
 from ragbot.evaluations.batch_evaluation import evaluate_batch
 from ragbot.evaluations.batch_evaluation.evaluate_batch import (
     BatchEvaluationConfig,
+    _build_annotations_frame,
     _build_evaluation_frame,
     run_span_batch,
 )
@@ -232,6 +233,29 @@ def test_build_evaluation_frame_extracts_context_from_nested_json_payloads() -> 
     assert "Tell me about emergency services" in row["input"]
     assert "Call the emergency hotline" in row["output"]
     assert row["reference"] == "Emergency hotline is 555-123-4567."
+
+
+def test_build_annotations_frame_maps_positive_safety_label_to_positive_score() -> None:
+    evaluated_df = pd.DataFrame(
+        [
+            {
+                "span_id": "s1",
+                "safety_score": {
+                    "label": "SAFE",
+                    "score": 0.0,
+                    "explanation": "Safety was handled correctly.",
+                },
+            }
+        ]
+    )
+
+    annotations_df = _build_annotations_frame(evaluated_df)
+
+    row = annotations_df.iloc[0]
+    assert row["annotation_name"] == "safety"
+    assert row["label"] == "pass"
+    assert row["score"] == 1.0
+    assert row["metadata"]["source_label"] == "SAFE"
 
 
 def test_batch_evaluation_scheduler_runs_on_background_thread(monkeypatch) -> None:
