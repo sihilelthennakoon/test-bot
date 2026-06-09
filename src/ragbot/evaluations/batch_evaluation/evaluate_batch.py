@@ -20,6 +20,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from ragbot.rca.rca_service import generate_rca
 
 import pandas as pd
 
@@ -728,6 +729,11 @@ async def evaluate_span_batch(config: BatchEvaluationConfig) -> BatchEvaluationR
 
 	rca_df = build_rca_feature_frame(annotations_df, evaluation_df)
 	rca_df.to_csv("csv/rca_features.csv", index=False)
+
+	final_rca = generate_rca(rca_df)
+
+	with open("csv/final_rca.json", "w", encoding="utf-8") as f:
+		json.dump(final_rca, f, indent=2, ensure_ascii=False)
 
 	if config.save_annotations: #put call here
 		log_phoenix_span_annotations(
