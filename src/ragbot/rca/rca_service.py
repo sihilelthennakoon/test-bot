@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import pandas as pd
@@ -35,8 +34,7 @@ def generate_rca(df: pd.DataFrame) -> list[dict[str, Any]]:
     """Generate one structured RCA result per trace in the dataframe."""
 
     settings = get_settings()
-    enable_llm = os.getenv("RCA_USE_LLM_JUDGE", "true").lower() not in {"false", "0", "no"}
-    judge = RCAJudge(model_name=settings.gemini_model, enable_llm=enable_llm)
+    judge = RCAJudge(model_name=settings.gemini_model)
 
     results: list[dict[str, Any]] = []
     for evidence in build_evidence_packages(df):
@@ -53,4 +51,5 @@ def generate_rca(df: pd.DataFrame) -> list[dict[str, Any]]:
                 "recommended_action": judgement["recommended_action"],
             }
         )
+    print("-------", results)
     return results

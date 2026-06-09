@@ -27,6 +27,7 @@ REQUIRED_COLUMNS = {
 }
 
 TRACE_ID_CANDIDATES = ("trace_id", "context_trace_id", "eval_trace_id")
+FINAL_NODE_ALIASES = {"finalize", "finalized"}
 
 
 def _coerce_text(value: Any) -> str:
@@ -141,6 +142,24 @@ def _aggregate_errors(series: pd.Series) -> list[str]:
     return seen
 
 
+def _normalize_langgraph_node(value: Any) -> str:
+    normalized = _coerce_text(value).lower()
+    if normalized in FINAL_NODE_ALIASES:
+        return "finalize"
+    return normalized
+
+
+def _score_source_group(group: pd.DataFrame) -> pd.DataFrame:
+    if "langgraph_node" not in group.columns:
+        return group
+
+    normalized_nodes = group["langgraph_node"].apply(_normalize_langgraph_node)
+    finalize_group = group.loc[normalized_nodes == "finalize"]
+    if not finalize_group.empty:
+        return finalize_group
+    return group
+
+
 def _resolve_trace_id_column(df: pd.DataFrame) -> str:
     for candidate in TRACE_ID_CANDIDATES:
         if candidate in df.columns:
@@ -172,6 +191,7 @@ def build_evidence_packages(rca_features_df: pd.DataFrame) -> list[dict[str, Any
         if not normalized_trace_id:
             continue
 
+        score_group = _score_source_group(group)
         retrieval_scores = _aggregate_retrieval_scores(group.get("retrieval_scores", pd.Series(dtype=object)))
         latency_values = [_coerce_float(value) for value in group.get("latency_ms", pd.Series(dtype=float))]
         valid_latency_values = [value for value in latency_values if value is not None]
@@ -191,10 +211,10 @@ def build_evidence_packages(rca_features_df: pd.DataFrame) -> list[dict[str, Any
                 "question": _pick_best_text(group["question"]),
                 "answer": _pick_best_text(group["answer"]),
                 "scores": {
-                    "correctness": _aggregate_score(group["correctness_score"]),
-                    "relevance": _aggregate_score(group["relevance_score"]),
-                    "faithfulness": _aggregate_score(group["faithfulness_score"]),
-                    "safety": _aggregate_score(group["safety_score"]),
+                    "correctness": _aggregate_score(score_group["correctness_score"]),
+                    "relevance": _aggregate_score(score_group["relevance_score"]),
+                    "faithfulness": _aggregate_score(score_group["faithfulness_score"]),
+                    "safety": _aggregate_score(score_group["safety_score"]),
                 },
                 "retrieval": {
                     "doc_count": int(max((_coerce_float(value) or 0) for value in group["retrieved_doc_count"])),
@@ -232,11 +252,11 @@ def build_evidence_packages(rca_features_df: pd.DataFrame) -> list[dict[str, Any
                     ),
                     "langgraph_nodes": sorted(
                         {
-                            _coerce_text(value)
+                            _normalize_langgraph_node(value)
                             for value in (
                                 group["langgraph_node"] if "langgraph_node" in group else pd.Series(dtype=object)
                             )
-                            if _coerce_text(value)
+                            if _normalize_langgraph_node(value)
                         }
                     ),
                     "span_ids": [
