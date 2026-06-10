@@ -669,11 +669,14 @@ def merge_final_rca_into_annotations(
 	*,
 	prefix: str = "rca_",
 ) -> pd.DataFrame:
-	"""Merge selected final RCA fields into annotation rows via span_id -> trace_id mapping."""
+	"""Add selected final RCA fields to annotation metadata via span_id -> trace_id mapping."""
 
 	selected_columns = [column for column in selected_features]
 	if annotation_df.empty or final_rca_df.empty or not selected_columns:
-		return annotation_df.copy()
+		merged = annotation_df.copy()
+		if "metadata" in merged.columns:
+			merged["metadata"] = [{} for _ in range(len(merged))]
+		return merged
 
 	missing_rca_columns = sorted(column for column in selected_columns if column not in final_rca_df.columns)
 	if missing_rca_columns:
@@ -688,25 +691,38 @@ def merge_final_rca_into_annotations(
 	if "trace_id" not in final_rca_df.columns:
 		raise ValueError("final_rca_df must contain a 'trace_id' column.")
 
-	span_trace_map = (
+	span_trace_df = (
 		rca_features_df.loc[:, ["span_id", "context_trace_id"]]
 		.dropna(subset=["span_id", "context_trace_id"])
 		.drop_duplicates(subset=["span_id"])
 	)
+	span_trace_map = {
+		_coerce_text(record["span_id"]): _coerce_text(record["context_trace_id"])
+		for record in span_trace_df.to_dict("records")
+	}
 
 	rca_columns = ["trace_id", *selected_columns]
 	rca_subset = final_rca_df.loc[:, rca_columns].copy()
-	rename_map = {column: f"{prefix}{column}" for column in selected_columns}
-	rca_subset = rca_subset.rename(columns=rename_map)
+	rca_by_trace_id = {
+		_coerce_text(record["trace_id"]): record
+		for record in rca_subset.to_dict("records")
+	}
 
-	merged = annotation_df.merge(span_trace_map, on="span_id", how="left")
-	merged = merged.merge(
-		rca_subset,
-		left_on="context_trace_id",
-		right_on="trace_id",
-		how="left",
-	)
-	return merged.drop(columns=["trace_id"], errors="ignore")
+	merged = annotation_df.copy()
+	metadata_values: list[dict[str, Any]] = []
+	for _, series in merged.iterrows():
+		span_id = _coerce_text(series.get("span_id"))
+		trace_id = span_trace_map.get(span_id, "")
+		rca_record = rca_by_trace_id.get(trace_id, {})
+		metadata = {}
+		for column in selected_columns:
+			value = rca_record.get(column)
+			if value is not None and not pd.isna(value):
+				metadata[f"{prefix}{column}"] = value
+		metadata_values.append(metadata)
+
+	merged["metadata"] = metadata_values
+	return merged
 	
 
 
@@ -765,7 +781,7 @@ async def evaluate_span_batch(config: BatchEvaluationConfig) -> BatchEvaluationR
 		return BatchEvaluationResult(spans_df=spans_df, evaluation_df=spans_df.copy(), annotations_df=annotations_df)
 
 	evaluation_df = _build_evaluation_frame(spans_df, span_kind=config.span_kind)
-	evaluation_df.to_csv("csv/evaluation_input.csv", index=False)
+
 	if evaluation_df.empty:
 		annotations_df = pd.DataFrame(
 			columns=["span_id", "annotation_name", "annotator_kind", "label", "score", "explanation", "metadata"]
@@ -774,18 +790,11 @@ async def evaluate_span_batch(config: BatchEvaluationConfig) -> BatchEvaluationR
 
 	runner = _build_runner()
 	scored_df = await runner.evaluate_dataframe(evaluation_df)
-	scored_df.to_csv("csv/evaluation_scored.csv", index=False)
 	annotations_df = _build_annotations_frame(scored_df)#tt
 
-	annotations_df.to_csv("csv/annotations.csv", index=False)
-
 	rca_df = build_rca_feature_frame(annotations_df, evaluation_df)
-	rca_df.to_csv("csv/rca_features.csv", index=False)
 
 	final_rca = generate_rca(rca_df)
-
-	with open("csv/final_rca.json", "w", encoding="utf-8") as f:
-		json.dump(final_rca, f, indent=2, ensure_ascii=False)
 
 	merged_annotations_df = merge_final_rca_into_annotations(
 		annotation_df=annotations_df,
@@ -798,9 +807,6 @@ async def evaluate_span_batch(config: BatchEvaluationConfig) -> BatchEvaluationR
 			"recommended_action",
 		],
 	)
-
-	with open("csv/merged_annotations.csv", "w", encoding="utf-8") as f:
-		merged_annotations_df.to_csv(f, index=False)
 
 	if config.save_annotations: #put call here
 		log_phoenix_span_annotations(
