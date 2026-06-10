@@ -51,5 +51,4 @@ def generate_rca(df: pd.DataFrame) -> list[dict[str, Any]]:
                 "recommended_action": judgement["recommended_action"],
             }
         )
-    print("-------", results)
     return results
