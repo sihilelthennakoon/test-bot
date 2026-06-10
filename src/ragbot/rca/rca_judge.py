@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -52,6 +53,12 @@ def _safe_json_loads(payload: str) -> dict[str, Any]:
         if start == -1 or end == -1 or start >= end:
             raise
         return json.loads(payload[start : end + 1])
+
+
+def _strip_json_fence_markers(content: str) -> str:
+    cleaned = re.sub(r"^\s*```json\s*", "", content, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```\s*$", "", cleaned)
+    return cleaned.strip()
 
 
 def _normalize_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -105,7 +112,6 @@ class RCAJudge:
             response = model.invoke(prompt)
         except Exception as exc:
             raise RCAJudgeError("RCA LLM judge invocation failed.") from exc
-
         content = getattr(response, "content", None)
         if isinstance(content, list):
             content = "\n".join(
@@ -114,6 +120,7 @@ class RCAJudge:
             )
         if not isinstance(content, str) or not content.strip():
             raise RCAJudgeError("RCA LLM judge returned empty content.")
+        content = _strip_json_fence_markers(content)
 
         try:
             parsed = _safe_json_loads(content)

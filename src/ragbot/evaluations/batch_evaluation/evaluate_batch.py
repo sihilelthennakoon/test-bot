@@ -19,7 +19,7 @@ import json
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Iterable
 from ragbot.rca.rca_service import generate_rca
 
 import pandas as pd
@@ -659,6 +659,54 @@ def build_rca_feature_frame(annotation_df: pd.DataFrame, span_df: pd.DataFrame) 
 		],
 	)
 	return df
+
+
+def merge_final_rca_into_annotations(
+	annotation_df: pd.DataFrame,
+	final_rca_df: pd.DataFrame,
+	rca_features_df: pd.DataFrame,
+	selected_features: Iterable[str],
+	*,
+	prefix: str = "rca_",
+) -> pd.DataFrame:
+	"""Merge selected final RCA fields into annotation rows via span_id -> trace_id mapping."""
+
+	selected_columns = [column for column in selected_features]
+	if annotation_df.empty or final_rca_df.empty or not selected_columns:
+		return annotation_df.copy()
+
+	missing_rca_columns = sorted(column for column in selected_columns if column not in final_rca_df.columns)
+	if missing_rca_columns:
+		raise ValueError(
+			f"Selected final RCA columns are missing from final_rca_df: {', '.join(missing_rca_columns)}"
+		)
+
+	if "span_id" not in annotation_df.columns:
+		raise ValueError("annotation_df must contain a 'span_id' column.")
+	if "span_id" not in rca_features_df.columns or "context_trace_id" not in rca_features_df.columns:
+		raise ValueError("rca_features_df must contain 'span_id' and 'context_trace_id' columns.")
+	if "trace_id" not in final_rca_df.columns:
+		raise ValueError("final_rca_df must contain a 'trace_id' column.")
+
+	span_trace_map = (
+		rca_features_df.loc[:, ["span_id", "context_trace_id"]]
+		.dropna(subset=["span_id", "context_trace_id"])
+		.drop_duplicates(subset=["span_id"])
+	)
+
+	rca_columns = ["trace_id", *selected_columns]
+	rca_subset = final_rca_df.loc[:, rca_columns].copy()
+	rename_map = {column: f"{prefix}{column}" for column in selected_columns}
+	rca_subset = rca_subset.rename(columns=rename_map)
+
+	merged = annotation_df.merge(span_trace_map, on="span_id", how="left")
+	merged = merged.merge(
+		rca_subset,
+		left_on="context_trace_id",
+		right_on="trace_id",
+		how="left",
+	)
+	return merged.drop(columns=["trace_id"], errors="ignore")
 	
 
 
@@ -739,17 +787,32 @@ async def evaluate_span_batch(config: BatchEvaluationConfig) -> BatchEvaluationR
 	with open("csv/final_rca.json", "w", encoding="utf-8") as f:
 		json.dump(final_rca, f, indent=2, ensure_ascii=False)
 
+	merged_annotations_df = merge_final_rca_into_annotations(
+		annotation_df=annotations_df,
+		final_rca_df=pd.DataFrame(final_rca),
+		rca_features_df=rca_df,
+		selected_features=[
+			"root_cause_category",
+			"confidence",
+			"explanation",
+			"recommended_action",
+		],
+	)
+
+	with open("csv/merged_annotations.csv", "w", encoding="utf-8") as f:
+		merged_annotations_df.to_csv(f, index=False)
+
 	if config.save_annotations: #put call here
 		log_phoenix_span_annotations(
-			annotations_df,
+			merged_annotations_df,
 			adapter,
 			sync=config.sync_annotations,
 		)
 
 	return BatchEvaluationResult(
 		spans_df=evaluation_df,
-		evaluation_df=scored_df,
-		annotations_df=annotations_df,
+		evaluation_df=scored_df,	
+		annotations_df=merged_annotations_df,
 	)
 
 
@@ -764,5 +827,6 @@ __all__ = [
 	"BatchEvaluationResult",
 	"build_rca_feature_frame",
 	"evaluate_span_batch",
+	"merge_final_rca_into_annotations",
 	"run_span_batch",
 ]
