@@ -45,6 +45,13 @@ PASS_LABELS = {
 	"PASSING",
 }
 
+RCA_EVALUATOR_TO_SOURCE_EVALUATOR = {
+	"correctness": "correctness",
+	"relevance": "relevance",
+	"faithfulness": "groundedness",
+	"safety": "safety",
+}
+
 INPUT_CANDIDATES = (
 	"input",
 	"input.value",
@@ -673,10 +680,7 @@ def merge_final_rca_into_annotations(
 
 	selected_columns = [column for column in selected_features]
 	if annotation_df.empty or final_rca_df.empty or not selected_columns:
-		merged = annotation_df.copy()
-		if "metadata" in merged.columns:
-			merged["metadata"] = [{} for _ in range(len(merged))]
-		return merged
+		return annotation_df.copy()
 
 	missing_rca_columns = sorted(column for column in selected_columns if column not in final_rca_df.columns)
 	if missing_rca_columns:
@@ -688,8 +692,8 @@ def merge_final_rca_into_annotations(
 		raise ValueError("annotation_df must contain a 'span_id' column.")
 	if "span_id" not in rca_features_df.columns or "context_trace_id" not in rca_features_df.columns:
 		raise ValueError("rca_features_df must contain 'span_id' and 'context_trace_id' columns.")
-	if "trace_id" not in final_rca_df.columns:
-		raise ValueError("final_rca_df must contain a 'trace_id' column.")
+	if "trace_id" not in final_rca_df.columns or "evaluator_name" not in final_rca_df.columns:
+		raise ValueError("final_rca_df must contain 'trace_id' and 'evaluator_name' columns.")
 
 	span_trace_df = (
 		rca_features_df.loc[:, ["span_id", "context_trace_id"]]
@@ -701,10 +705,18 @@ def merge_final_rca_into_annotations(
 		for record in span_trace_df.to_dict("records")
 	}
 
-	rca_columns = ["trace_id", *selected_columns]
+	rca_columns = ["trace_id", "evaluator_name", *selected_columns]
+	if "evaluator_score" in final_rca_df.columns and "evaluator_score" not in rca_columns:
+		rca_columns.append("evaluator_score")
 	rca_subset = final_rca_df.loc[:, rca_columns].copy()
-	rca_by_trace_id = {
-		_coerce_text(record["trace_id"]): record
+	rca_by_trace_and_evaluator = {
+		(
+			_coerce_text(record["trace_id"]),
+			RCA_EVALUATOR_TO_SOURCE_EVALUATOR.get(
+				_coerce_text(record["evaluator_name"]),
+				_coerce_text(record["evaluator_name"]),
+			),
+		): record
 		for record in rca_subset.to_dict("records")
 	}
 
@@ -713,12 +725,20 @@ def merge_final_rca_into_annotations(
 	for _, series in merged.iterrows():
 		span_id = _coerce_text(series.get("span_id"))
 		trace_id = span_trace_map.get(span_id, "")
-		rca_record = rca_by_trace_id.get(trace_id, {})
-		metadata = {}
+		existing_metadata = series.get("metadata")
+		metadata = dict(existing_metadata) if isinstance(existing_metadata, dict) else {}
+		source_evaluator = _coerce_text(metadata.get("source_evaluator"))
+		rca_record = rca_by_trace_and_evaluator.get((trace_id, source_evaluator), {})
 		for column in selected_columns:
 			value = rca_record.get(column)
 			if value is not None and not pd.isna(value):
 				metadata[f"{prefix}{column}"] = value
+		evaluator_name = _coerce_text(rca_record.get("evaluator_name"))
+		if evaluator_name:
+			metadata[f"{prefix}evaluator_name"] = evaluator_name
+		evaluator_score = rca_record.get("evaluator_score")
+		if evaluator_score is not None and not pd.isna(evaluator_score):
+			metadata[f"{prefix}evaluator_score"] = evaluator_score
 		metadata_values.append(metadata)
 
 	merged["metadata"] = metadata_values
