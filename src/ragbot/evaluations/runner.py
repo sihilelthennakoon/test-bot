@@ -368,6 +368,22 @@ class EvaluationRunner:
                     evaluators=[evaluator],
                 )
             except Exception as e:
+                if evaluator_name == "safety":
+                    from . import safety
+
+                    fallback_evaluator = safety.create_safety_evaluator(use_llm_judge=False)
+                    try:
+                        results_df = phoenix_evaluate_dataframe(
+                            dataframe=results_df,
+                            evaluators=[fallback_evaluator],
+                        )
+                        continue
+                    except Exception as fallback_error:
+                        results_df[f"{evaluator_name}_error"] = (
+                            f"LLM evaluator error: {e}; fallback evaluator error: {fallback_error}"
+                        )
+                        continue
+
                 # Log error but continue with other evaluators
                 results_df[f"{evaluator_name}_error"] = str(e)
         

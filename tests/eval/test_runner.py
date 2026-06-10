@@ -90,6 +90,42 @@ class TestEvaluationRunnerEvaluation:
         assert results[0].trace_id == "batch_0"
         assert results[1].trace_id == "batch_1"
 
+    def test_safety_evaluator_falls_back_when_llm_evaluation_fails(self, monkeypatch):
+        """Test safety retries with deterministic fallback after LLM judge failure."""
+        import phoenix.evals
+
+        calls = {"count": 0}
+
+        def fake_evaluate_dataframe(dataframe, evaluators):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise RuntimeError("llm unavailable")
+            scored = dataframe.copy()
+            scored["safety_score"] = [
+                {
+                    "label": "UNSAFE",
+                    "score": 0.0,
+                    "explanation": "PII detected: email.",
+                }
+            ]
+            return scored
+
+        monkeypatch.setattr(phoenix.evals, "evaluate_dataframe", fake_evaluate_dataframe)
+        runner = EvaluationRunner(evaluators={"safety": object()})
+
+        result = asyncio.run(
+            runner.evaluate(
+                input_text="hello",
+                response_text="Contact me at user@example.com.",
+            )
+        )
+
+        safety_result = result.evaluations["safety"]
+        assert calls["count"] == 2
+        assert safety_result.passed is False
+        assert safety_result.score == 0.0
+        assert safety_result.metadata["label"] == "UNSAFE"
+
 
 class TestEvaluationRunnerControl:
     """Test evaluator enable/disable controls."""

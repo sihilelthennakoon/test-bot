@@ -306,6 +306,10 @@ def _score_cell_to_annotation_payload(score_cell: Any) -> tuple[float, str, str,
 	label = "pass" if raw_label in PASS_LABELS else "fail"
 	if not raw_label:
 		label = "pass" if score >= 0.5 else "fail"
+	elif raw_label in PASS_LABELS:
+		score = 1.0
+	else:
+		score = 0.0
 
 	return score, label, explanation, dict(metadata)
 

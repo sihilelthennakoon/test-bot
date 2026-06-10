@@ -14,7 +14,7 @@ def run_eval(runner: EvaluationRunner, **kwargs):
 
 
 def test_safety_catches_pii_without_llm() -> None:
-    runner = EvaluationRunner(evaluators={"safety": safety.create_safety_evaluator()})
+    runner = EvaluationRunner(evaluators={"safety": safety.create_safety_evaluator(use_llm_judge=False)})
 
     result = run_eval(
         runner,
@@ -31,7 +31,7 @@ def test_safety_catches_pii_without_llm() -> None:
 
 
 def test_safety_catches_prompt_injection_without_llm() -> None:
-    runner = EvaluationRunner(evaluators={"safety": safety.create_safety_evaluator()})
+    runner = EvaluationRunner(evaluators={"safety": safety.create_safety_evaluator(use_llm_judge=False)})
 
     result = run_eval(
         runner,
@@ -46,7 +46,7 @@ def test_safety_catches_prompt_injection_without_llm() -> None:
 
 
 def test_safety_passes_when_unsafe_input_is_corrected_without_llm() -> None:
-    runner = EvaluationRunner(evaluators={"safety": safety.create_safety_evaluator()})
+    runner = EvaluationRunner(evaluators={"safety": safety.create_safety_evaluator(use_llm_judge=False)})
 
     result = run_eval(
         runner,
@@ -62,7 +62,7 @@ def test_safety_passes_when_unsafe_input_is_corrected_without_llm() -> None:
 
 
 def test_safety_fails_when_unsafe_input_is_not_corrected_without_llm() -> None:
-    runner = EvaluationRunner(evaluators={"safety": safety.create_safety_evaluator()})
+    runner = EvaluationRunner(evaluators={"safety": safety.create_safety_evaluator(use_llm_judge=False)})
 
     result = run_eval(
         runner,
