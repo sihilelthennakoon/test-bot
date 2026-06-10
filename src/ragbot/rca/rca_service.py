@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 import pandas as pd
@@ -9,7 +10,7 @@ from ragbot.rca.evidence_builder import build_evidence_packages
 from ragbot.rca.rca_judge import RCAJudge
 
 
-def _extract_failed_scores(scores: dict[str, Any], threshold: float = 0.5) -> dict[str, float]:
+def _extract_failed_scores(scores: dict[str, Any], threshold: float) -> dict[str, float]:
     failed_scores: dict[str, float] = {}
     for score_name, score_value in scores.items():
         if not isinstance(score_value, (int, float)):
@@ -30,25 +31,53 @@ def _extract_all_scores(scores: dict[str, Any]) -> dict[str, float | None]:
     return all_scores
 
 
+def _build_evaluator_evidence(
+    evidence: dict[str, Any],
+    evaluator_name: str,
+    evaluator_score: float,
+    threshold: float,
+) -> dict[str, Any]:
+    evaluator_evidence = deepcopy(evidence)
+    evaluator_evidence["evaluator_name"] = evaluator_name
+    evaluator_evidence["evaluator_score"] = round(float(evaluator_score), 6)
+    evaluator_evidence["failed_scores"] = _extract_failed_scores(
+        {evaluator_name: evaluator_score},
+        threshold,
+    )
+    return evaluator_evidence
+
+
 def generate_rca(df: pd.DataFrame) -> list[dict[str, Any]]:
-    """Generate one structured RCA result per trace in the dataframe."""
+    """Generate one structured RCA result per failed evaluator in the dataframe."""
 
     settings = get_settings()
     judge = RCAJudge(model_name=settings.gemini_model)
+    threshold = settings.rca_threshold
 
     results: list[dict[str, Any]] = []
     for evidence in build_evidence_packages(df):
-        judgement = judge.judge(evidence)
-        results.append(
-            {
-                "trace_id": evidence["trace_id"],
-                "root_cause_category": judgement["root_cause_category"],
-                "confidence": judgement["confidence"],
-                "evaluator_scores": _extract_all_scores(evidence.get("scores", {})),
-                "failed_scores": _extract_failed_scores(evidence.get("scores", {})),
-                "evidence": judgement["evidence"],
-                "explanation": judgement["explanation"],
-                "recommended_action": judgement["recommended_action"],
-            }
-        )
+        scores = _extract_all_scores(evidence.get("scores", {}))
+        failed_scores = _extract_failed_scores(evidence.get("scores", {}), threshold)
+        for evaluator_name, evaluator_score in failed_scores.items():
+            evaluator_evidence = _build_evaluator_evidence(
+                evidence,
+                evaluator_name,
+                evaluator_score,
+                threshold,
+            )
+            judgement = judge.judge(evaluator_evidence)
+            results.append(
+                {
+                    "trace_id": evidence["trace_id"],
+                    "evaluator_name": evaluator_name,
+                    "evaluator_score": evaluator_score,
+                    "evaluator_scores": scores,
+                    "failed_scores": {evaluator_name: evaluator_score},
+                    "root_cause_category": judgement["root_cause_category"],
+                    "confidence": judgement["confidence"],
+                    "evidence": judgement["evidence"],
+                    "explanation": judgement["explanation"],
+                    "recommended_action": judgement["recommended_action"],
+                }
+            )
     return results

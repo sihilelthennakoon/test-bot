@@ -28,6 +28,7 @@ class Settings:
     )
     max_input_chars: int = int(os.getenv("RAGBOT_MAX_INPUT_CHARS", "6000"))
     retrieval_top_k: int = int(os.getenv("RAGBOT_RETRIEVAL_TOP_K", "4"))
+    rca_threshold: float = float(os.getenv("RCA_THRESHOLD", "0.5"))
     phoenix_project_name: str = os.getenv("PHOENIX_PROJECT_NAME", "test-bot-with-eval")
     phoenix_collector_endpoint: str = os.getenv("PHOENIX_COLLECTOR_ENDPOINT", "http://localhost:6006")
     phoenix_query_endpoint: str = os.getenv("PHOENIX_QUERY_ENDPOINT", "http://localhost:6006")
