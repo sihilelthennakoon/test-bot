@@ -19,7 +19,6 @@ from ragbot.safety.guardrails import GuardrailEngine
 from ragbot.safety.pii import PIIMasker
 from ragbot.vectorstore.faiss_store import FaissVectorStore
 
-os.environ["HF_HUB_DISABLE_SSL_VERIFICATION"] = "1"
 
 def build_embedding_provider(settings: Settings):
     if settings.embedding_provider in {"sentence-transformer", "sentence_transformers", "sentence-transformer-model"}:

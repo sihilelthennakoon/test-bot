@@ -19,9 +19,15 @@ from data_fetch.fetch_from_phoenix import (
 
 
 class FakePhoenixAdapter(PhoenixAdapter):
-    def __init__(self, traces: list[dict], spans_by_trace: dict[str, list[dict]]) -> None:
+    def __init__(
+        self,
+        traces: list[dict],
+        spans_by_trace: dict[str, list[dict]],
+        annotations_df: pd.DataFrame | None = None,
+    ) -> None:
         self._traces = traces
         self._spans_by_trace = spans_by_trace
+        self._annotations_df = annotations_df if annotations_df is not None else pd.DataFrame()
 
     def fetch_traces(
         self,
@@ -69,6 +75,19 @@ class FakePhoenixAdapter(PhoenixAdapter):
         self.annotations_df = annotations_df
         self.sync_annotations = sync
 
+    def fetch_span_annotations_dataframe(
+        self,
+        *,
+        span_ids,
+        project_name,
+        limit,
+    ) -> pd.DataFrame:
+        if self._annotations_df.empty or "span_id" not in self._annotations_df.columns:
+            return self._annotations_df.copy()
+        return self._annotations_df[
+            self._annotations_df["span_id"].isin(span_ids)
+        ].head(limit).copy()
+
 
 def test_fetch_raw_spans_dataframe_uses_adapter() -> None:
     adapter = FakePhoenixAdapter(
@@ -103,6 +122,82 @@ def test_fetch_raw_spans_dataframe_uses_adapter() -> None:
             "output": "A city.",
         }
     ]
+
+
+def test_fetch_raw_spans_dataframe_excludes_correctness_annotated_spans() -> None:
+    adapter = FakePhoenixAdapter(
+        traces=[],
+        spans_by_trace={
+            "t1": [
+                {
+                    "span_id": "s1",
+                    "trace_id": "t1",
+                    "input": "already evaluated",
+                },
+                {
+                    "span_id": "s2",
+                    "trace_id": "t1",
+                    "input": "not evaluated",
+                },
+            ]
+        },
+        annotations_df=pd.DataFrame(
+            [
+                {
+                    "span_id": "s1",
+                    "annotation_name": "correctness",
+                }
+            ]
+        ),
+    )
+
+    spans_df = fetch_phoenix_spans_dataframe(
+        RawSpansDataFrameRequest(
+            from_time=parse_datetime("2026-06-01T09:00:00Z"),
+            to_time=parse_datetime("2026-06-01T10:00:00Z"),
+            project_name="test-bot-with-eval",
+            limit=10,
+        ),
+        adapter,
+    )
+
+    assert spans_df["span_id"].tolist() == ["s2"]
+
+
+def test_fetch_raw_spans_dataframe_keeps_spans_with_non_correctness_annotations() -> None:
+    adapter = FakePhoenixAdapter(
+        traces=[],
+        spans_by_trace={
+            "t1": [
+                {
+                    "span_id": "s1",
+                    "trace_id": "t1",
+                    "input": "has safety only",
+                }
+            ]
+        },
+        annotations_df=pd.DataFrame(
+            [
+                {
+                    "span_id": "s1",
+                    "annotation_name": "safety",
+                }
+            ]
+        ),
+    )
+
+    spans_df = fetch_phoenix_spans_dataframe(
+        RawSpansDataFrameRequest(
+            from_time=parse_datetime("2026-06-01T09:00:00Z"),
+            to_time=parse_datetime("2026-06-01T10:00:00Z"),
+            project_name="test-bot-with-eval",
+            limit=10,
+        ),
+        adapter,
+    )
+
+    assert spans_df["span_id"].tolist() == ["s1"]
+
 
 def test_fetch_filters_chain_spans_and_writes_jsonl(tmp_path: Path) -> None:
     request = FetchRequest(
