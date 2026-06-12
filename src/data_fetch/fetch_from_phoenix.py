@@ -172,6 +172,15 @@ class PhoenixAdapter(Protocol):
     ) -> None:
         ...
 
+    def fetch_span_annotations_dataframe(
+        self,
+        *,
+        span_ids: list[str],
+        project_name: str | None,
+        limit: int,
+    ) -> pd.DataFrame:
+        ...
+
 
 class PhoenixSdkAdapter:
     """Fetches traces and spans using Phoenix SDK client methods when available."""
@@ -316,6 +325,25 @@ class PhoenixSdkAdapter:
                 "sync": sync,
             },
         )
+
+    def fetch_span_annotations_dataframe(
+        self,
+        *,
+        span_ids: list[str],
+        project_name: str | None,
+        limit: int,
+    ) -> pd.DataFrame:
+        payload = self._call_with_supported_kwargs(
+            self._client.spans.get_span_annotations_dataframe,
+            {
+                "span_ids": span_ids,
+                "project_identifier": project_name or "default",
+                "limit": limit,
+            },
+        )
+        if isinstance(payload, pd.DataFrame):
+            return payload
+        return pd.DataFrame(self._to_records(payload))
 
 
 def load_checkpoint(path: Path) -> FetchCheckpoint:
@@ -555,16 +583,94 @@ def make_raw_spans_dataframe_request(
     )
 
 
+def _span_id_value(record: dict[str, Any]) -> str:
+    return str(
+        record.get("span_id")
+        or record.get("context.span_id")
+        or record.get("spanId")
+        or record.get("id")
+        or record.get("span_uuid")
+        or ""
+    ).strip()
+
+
+def _evaluated_span_ids_from_annotations(
+    annotations_df: pd.DataFrame,
+    *,
+    annotation_name: str = "correctness",
+) -> set[str]:
+    if annotations_df.empty or "span_id" not in annotations_df.columns or "annotation_name" not in annotations_df.columns:
+        return set()
+    matching_annotations = annotations_df[
+        annotations_df["annotation_name"].astype(str).str.strip() == annotation_name
+    ]
+    return {
+        span_id
+        for span_id in (str(value).strip() for value in matching_annotations["span_id"].tolist())
+        if span_id
+    }
+
+
+def _filter_spans_without_annotation(
+    spans_df: pd.DataFrame,
+    annotations_df: pd.DataFrame,
+    *,
+    annotation_name: str = "correctness",
+) -> pd.DataFrame:
+    evaluated_span_ids = _evaluated_span_ids_from_annotations(
+        annotations_df,
+        annotation_name=annotation_name,
+    )
+    if spans_df.empty or not evaluated_span_ids:
+        return spans_df.copy()
+
+    mask = [
+        _span_id_value(series.to_dict()) not in evaluated_span_ids
+        for _, series in spans_df.iterrows()
+    ]
+    return spans_df.loc[mask].copy()
+
+
+def _fetch_existing_span_annotations(
+    spans_df: pd.DataFrame,
+    request: RawSpansDataFrameRequest,
+    adapter: PhoenixAdapter,
+) -> pd.DataFrame:
+    fetcher = getattr(adapter, "fetch_span_annotations_dataframe", None)
+    if spans_df.empty or not callable(fetcher):
+        return pd.DataFrame()
+
+    span_ids = [
+        span_id
+        for span_id in (_span_id_value(series.to_dict()) for _, series in spans_df.iterrows())
+        if span_id
+    ]
+    if not span_ids:
+        return pd.DataFrame()
+
+    return fetcher(
+        span_ids=span_ids,
+        project_name=request.project_name,
+        limit=max(len(span_ids) * 10, 1000),
+    )
+
+
 def fetch_phoenix_spans_dataframe(
     request: RawSpansDataFrameRequest,
     adapter: PhoenixAdapter,
 ) -> pd.DataFrame:
-    return adapter.fetch_spans_dataframe(
+    spans_df = adapter.fetch_spans_dataframe(
         from_time=request.from_time,
         to_time=request.to_time,
         project_name=request.project_name,
         limit=request.limit,
         root_spans_only=request.root_spans_only,
+    )
+    annotations_df = _fetch_existing_span_annotations(spans_df, request, adapter)
+    return _filter_spans_without_annotation(
+        spans_df,
+        annotations_df,
+        annotation_name="correctness",
     )
 
 

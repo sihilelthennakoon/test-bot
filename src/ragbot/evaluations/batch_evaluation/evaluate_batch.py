@@ -245,6 +245,104 @@ def _ensure_span_id(record: dict[str, Any], fallback_index: int) -> str:
 	return f"span_{fallback_index}"
 
 
+def _span_id_value(record: dict[str, Any]) -> str:
+	return _coerce_text(
+		record.get("span_id")
+		or record.get("context.span_id")
+		or record.get("spanId")
+		or record.get("id")
+		or record.get("span_uuid")
+	)
+
+
+PARENT_ID_CANDIDATES = (
+	"parent_id",
+	"parent.span_id",
+	"parent_span_id",
+	"parentSpanId",
+	"context.parent_id",
+	"context.parent_span_id",
+)
+
+
+def _parent_id_value(record: dict[str, Any]) -> Any:
+	for key in PARENT_ID_CANDIDATES:
+		if key in record:
+			return record.get(key)
+	return None
+
+
+def _has_parent_id_field(record: dict[str, Any]) -> bool:
+	return any(key in record for key in PARENT_ID_CANDIDATES)
+
+
+def _is_missing_parent_id(value: Any) -> bool:
+	if value is None:
+		return True
+	try:
+		if pd.isna(value):
+			return True
+	except (TypeError, ValueError):
+		pass
+	return not _coerce_text(value)
+
+
+def _is_langgraph_application_span(record: dict[str, Any]) -> bool:
+	name = _coerce_text(record.get("name") or record.get("span_name"))
+	if name == "LangGraph":
+		return True
+
+	metadata = _parse_structured_value(record.get("attributes.metadata"))
+	if isinstance(metadata, dict) and _coerce_text(metadata.get("ls_integration")) == "langgraph":
+		return True
+
+	return False
+
+
+def _is_main_application_span(record: dict[str, Any]) -> bool:
+	if not _has_parent_id_field(record):
+		return False
+	return (
+		_is_missing_parent_id(_parent_id_value(record))
+		and _span_kind(record) == "CHAIN"
+		and _is_langgraph_application_span(record)
+	)
+
+
+def _filter_main_application_spans(spans_df: pd.DataFrame) -> pd.DataFrame:
+	if spans_df.empty:
+		return spans_df.copy()
+	mask = [
+		_is_main_application_span(series.to_dict())
+		for _, series in spans_df.iterrows()
+	]
+	return spans_df.loc[mask].copy()
+
+
+def _evaluation_input(record: dict[str, Any], input_payload: Any, output_payload: Any) -> str:
+	return (
+		_extract_message(input_payload)
+		or _extract_message(output_payload)
+		or _first_non_empty(record, INPUT_CANDIDATES)
+	)
+
+
+def _evaluation_output(record: dict[str, Any], input_payload: Any, output_payload: Any) -> str:
+	return (
+		_extract_answer(output_payload)
+		or _extract_answer(input_payload)
+		or _first_non_empty(record, OUTPUT_CANDIDATES)
+	)
+
+
+def _evaluation_reference(record: dict[str, Any], input_payload: Any, output_payload: Any) -> str:
+	return (
+		_coerce_text((output_payload or {}).get("context") if isinstance(output_payload, dict) else "")
+		or _coerce_text((input_payload or {}).get("context") if isinstance(input_payload, dict) else "")
+		or _first_non_empty(record, REFERENCE_CANDIDATES)
+	)
+
+
 def _build_evaluation_frame(spans_df: pd.DataFrame, span_kind: str | None = None) -> pd.DataFrame:
 	normalized = spans_df.copy()
 
@@ -266,9 +364,11 @@ def _build_evaluation_frame(spans_df: pd.DataFrame, span_kind: str | None = None
 			continue
 
 		span_id = _coerce_text(record.get("span_id")) or _ensure_span_id(record, index)
-		input_text = _first_non_empty(record, INPUT_CANDIDATES)
-		output_text = _first_non_empty(record, OUTPUT_CANDIDATES)
-		reference_text = _first_non_empty(record, REFERENCE_CANDIDATES)
+		input_payload = _parse_structured_value(record.get("attributes.input.value"))
+		output_payload = _parse_structured_value(record.get("attributes.output.value"))
+		input_text = _evaluation_input(record, input_payload, output_payload)
+		output_text = _evaluation_output(record, input_payload, output_payload)
+		reference_text = _evaluation_reference(record, input_payload, output_payload)
 
 		rows.append(
 			{
@@ -793,6 +893,7 @@ async def evaluate_span_batch(config: BatchEvaluationConfig) -> BatchEvaluationR
 		),
 		adapter,
 	)
+	spans_df = _filter_main_application_spans(spans_df)
 
 	if spans_df.empty:
 		annotations_df = pd.DataFrame(
