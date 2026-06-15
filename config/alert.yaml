@@ -1,0 +1,14 @@
+enabled: true
+evaluators:
+  correctness:
+    score_threshold: 0.5
+    percent_threshold: 30
+  relevance:
+    score_threshold: 0.5
+    percent_threshold: 30
+  faithfulness:
+    score_threshold: 0.5
+    percent_threshold: 30
+  safety:
+    score_threshold: 0.5
+    percent_threshold: 30

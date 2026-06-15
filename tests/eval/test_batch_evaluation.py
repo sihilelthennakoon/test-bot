@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pandas as pd
 
+from ragbot.evaluations.batch_evaluation import alerts
+from ragbot.evaluations.batch_evaluation import evaluate_batch as batch_module
 from ragbot.evaluations.batch_evaluation.evaluate_batch import (
+	BatchEvaluationConfig,
 	_build_evaluation_frame,
 	_filter_main_application_spans,
 	merge_final_rca_into_annotations,
@@ -129,3 +132,154 @@ def test_merge_final_rca_into_annotations_preserves_columns_and_adds_rca_metadat
 		"rca_recommended_action": "Improve retrieval coverage.",
 		"rca_evaluator_name": "safety",
 	}
+
+
+def test_detect_degradation_alerts_when_low_score_percentage_meets_threshold() -> None:
+	annotations_df = pd.DataFrame(
+		[
+			{"annotation_name": "correctness", "score": 0.0},
+			{"annotation_name": "correctness", "score": 0.25},
+			{"annotation_name": "correctness", "score": 1.0},
+		]
+	)
+	config = {
+		"enabled": True,
+		"evaluators": {
+			"correctness": {
+				"score_threshold": 0.5,
+				"percent_threshold": 60,
+			}
+		},
+	}
+
+	detected_alerts = alerts.detect_degradation_alerts(annotations_df, config)
+
+	assert detected_alerts == [
+		{
+			"evaluator": "correctness",
+			"low_score_count": 2,
+			"total_count": 3,
+			"low_score_percent": 66.66666666666666,
+			"score_threshold": 0.5,
+			"percent_threshold": 60.0,
+		}
+	]
+
+
+def test_detect_degradation_alerts_does_not_alert_below_threshold() -> None:
+	annotations_df = pd.DataFrame(
+		[
+			{"annotation_name": "safety", "score": 0.0},
+			{"annotation_name": "safety", "score": 1.0},
+		]
+	)
+	config = {
+		"enabled": True,
+		"evaluators": {
+			"safety": {
+				"score_threshold": 0.5,
+				"percent_threshold": 75,
+			}
+		},
+	}
+
+	assert alerts.detect_degradation_alerts(annotations_df, config) == []
+
+
+def test_detect_degradation_alerts_is_disabled_by_config() -> None:
+	annotations_df = pd.DataFrame([{"annotation_name": "relevance", "score": 0.0}])
+	config = {
+		"enabled": False,
+		"evaluators": {
+			"relevance": {
+				"score_threshold": 0.5,
+				"percent_threshold": 1,
+			}
+		},
+	}
+
+	assert alerts.detect_degradation_alerts(annotations_df, config) == []
+
+
+def test_detect_degradation_alerts_skips_unconfigured_evaluators() -> None:
+	annotations_df = pd.DataFrame([{"annotation_name": "correctness", "score": 0.0}])
+	config = {
+		"enabled": True,
+		"evaluators": {
+			"safety": {
+				"score_threshold": 0.5,
+				"percent_threshold": 1,
+			}
+		},
+	}
+
+	assert alerts.detect_degradation_alerts(annotations_df, config) == []
+
+
+def test_detect_degradation_alerts_skips_invalid_threshold_config(caplog) -> None:
+	annotations_df = pd.DataFrame([{"annotation_name": "correctness", "score": 0.0}])
+	config = {
+		"enabled": True,
+		"evaluators": {
+			"correctness": {
+				"score_threshold": 1.5,
+				"percent_threshold": 1,
+			}
+		},
+	}
+
+	assert alerts.detect_degradation_alerts(annotations_df, config) == []
+	assert "Skipping degradation alert detection" in caplog.text
+
+
+def test_evaluate_span_batch_runs_degradation_alert_check_after_annotations(monkeypatch) -> None:
+	class FakeAdapter:
+		def fetch_spans_dataframe(self, **kwargs):
+			return pd.DataFrame(
+				[
+					{
+						"name": "LangGraph",
+						"span_kind": "CHAIN",
+						"parent_id": None,
+						"span_id": "span-1",
+						"context.trace_id": "trace-1",
+						"attributes.input.value": '{"message": "Question?"}',
+						"attributes.output.value": '{"answer": "Answer.", "context": "Context."}',
+					}
+				]
+			)
+
+		def fetch_span_annotations_dataframe(self, **kwargs):
+			return pd.DataFrame()
+
+		def log_span_annotations_dataframe(self, **kwargs):
+			raise AssertionError("save_annotations=False should skip Phoenix logging")
+
+	class FakeRunner:
+		async def evaluate_dataframe(self, evaluation_df):
+			scored_df = evaluation_df.copy()
+			scored_df["correctness_score"] = [
+				{"score": 1.0, "label": "CORRECT", "explanation": "ok"}
+			]
+			return scored_df
+
+	seen_annotations: list[pd.DataFrame] = []
+
+	monkeypatch.setattr(batch_module, "_build_runner", lambda: FakeRunner())
+	monkeypatch.setattr(batch_module, "generate_rca", lambda rca_df: [])
+	monkeypatch.setattr(
+		alerts,
+		"log_degradation_alerts",
+		lambda annotations_df: seen_annotations.append(annotations_df.copy()),
+	)
+
+	result = batch_module.run_span_batch(
+		BatchEvaluationConfig(
+			adapter=FakeAdapter(),
+			save_annotations=False,
+		)
+	)
+
+	assert result.annotation_count == 1
+	assert len(seen_annotations) == 1
+	assert seen_annotations[0]["annotation_name"].tolist() == ["correctness"]
