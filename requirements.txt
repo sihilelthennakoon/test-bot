@@ -16,4 +16,5 @@ openinference-instrumentation-langchain>=0.1.0
 presidio-analyzer>=2.2
 presidio-anonymizer>=2.2
 python-dotenv>=1.0
+PyYAML>=6.0
 pytest>=8.2

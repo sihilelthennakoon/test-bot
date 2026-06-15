@@ -32,6 +32,7 @@ from data_fetch.fetch_from_phoenix import (
 	PhoenixAdapter,
 )
 from ragbot.evaluations import correctness, groundedness, relevance, safety
+from ragbot.evaluations.batch_evaluation import alerts
 from ragbot.evaluations.runner import EvaluationRunner
 
 
@@ -912,6 +913,7 @@ async def evaluate_span_batch(config: BatchEvaluationConfig) -> BatchEvaluationR
 	runner = _build_runner()
 	scored_df = await runner.evaluate_dataframe(evaluation_df)
 	annotations_df = _build_annotations_frame(scored_df)#tt
+	alerts.log_degradation_alerts(annotations_df)
 
 	rca_df = build_rca_feature_frame(annotations_df, evaluation_df)
 
