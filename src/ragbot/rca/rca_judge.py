@@ -36,29 +36,85 @@ def _json_only_prompt(evidence: dict[str, Any]) -> str:
         "{\n"
         '  "root_cause_category": "",\n'
         '  "confidence": 0.0,\n'
-        '  "evidence": [],\n'
+        '  "evidence": ["short evidence string"],\n'
         '  "explanation": "",\n'
         '  "recommended_action": ""\n'
-        "}\n\n"
+        "}\n"
+        'The "evidence" field must be an array of strings only.\n'
+        'Valid evidence example: ["retrieval.avg_score: 0.14", "context_has_answer: false"]\n'
+        'Invalid evidence example: ["question": "What is your name?"]\n\n'
         f"Evidence:\n{json.dumps(evidence, ensure_ascii=True, indent=2)}"
     )
 
 
+def _extract_outermost_json_object(payload: str) -> str:
+    start = payload.find("{")
+    end = payload.rfind("}")
+    if start == -1 or end == -1 or start >= end:
+        return payload
+    return payload[start : end + 1]
+
+
+def _repair_malformed_evidence_array(payload: str) -> str:
+    pattern = re.compile(r'("evidence"\s*:\s*\[\s*)(.*?)(\s*\])', flags=re.DOTALL)
+
+    def replace(match: re.Match[str]) -> str:
+        prefix, body, suffix = match.groups()
+        if not re.search(r'"\s*:\s*', body):
+            return match.group(0)
+
+        repaired_body = re.sub(
+            r'"([^"\\]+)"\s*:\s*(".*?"|\[[^\]]*\]|-?\d+(?:\.\d+)?|true|false|null)',
+            lambda item: json.dumps(
+                f"{item.group(1)}: {json.loads(item.group(2)) if item.group(2).startswith(chr(34)) else item.group(2)}"
+            ),
+            body,
+            flags=re.DOTALL,
+        )
+        repaired_body = repaired_body.replace('",\n    "', '",\n    "')
+        return f"{prefix}{repaired_body}{suffix}"
+
+    return pattern.sub(replace, payload, count=1)
+
+
+def _prepare_json_payload(payload: str) -> str:
+    return _repair_malformed_evidence_array(_extract_outermost_json_object(payload))
+
+
 def _safe_json_loads(payload: str) -> dict[str, Any]:
+    prepared_payload = _prepare_json_payload(payload)
     try:
-        return json.loads(payload)
+        return json.loads(prepared_payload)
     except json.JSONDecodeError:
-        start = payload.find("{")
-        end = payload.rfind("}")
-        if start == -1 or end == -1 or start >= end:
+        extracted_payload = _extract_outermost_json_object(prepared_payload)
+        if extracted_payload == prepared_payload:
             raise
-        return json.loads(payload[start : end + 1])
+        repaired_payload = _repair_malformed_evidence_array(extracted_payload)
+        return json.loads(repaired_payload)
 
 
 def _strip_json_fence_markers(content: str) -> str:
     cleaned = re.sub(r"^\s*```json\s*", "", content, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s*```\s*$", "", cleaned)
     return cleaned.strip()
+
+
+def _stringify_evidence_item(item: Any) -> str:
+    if item is None:
+        return ""
+    if isinstance(item, str):
+        return item.strip()
+    if isinstance(item, dict):
+        parts = []
+        for key, value in item.items():
+            text = _stringify_evidence_item(value)
+            if text:
+                parts.append(f"{key}: {text}")
+        return "; ".join(parts).strip()
+    if isinstance(item, (list, tuple, set)):
+        parts = [_stringify_evidence_item(value) for value in item]
+        return "; ".join(part for part in parts if part).strip()
+    return str(item).strip()
 
 
 def _normalize_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -74,12 +130,12 @@ def _normalize_result(result: dict[str, Any]) -> dict[str, Any]:
 
     evidence = result.get("evidence", [])
     if not isinstance(evidence, list):
-        evidence = [str(evidence)]
+        evidence = [evidence]
 
     normalized = {
         "root_cause_category": category,
         "confidence": round(confidence, 3),
-        "evidence": [str(item).strip() for item in evidence if str(item).strip()],
+        "evidence": [text for item in evidence if (text := _stringify_evidence_item(item))],
         "explanation": str(result.get("explanation", "")).strip(),
         "recommended_action": str(result.get("recommended_action", "")).strip(),
     }
@@ -123,8 +179,10 @@ class RCAJudge:
         content = _strip_json_fence_markers(content)
 
         try:
+            print (f"RCA Judge raw response content:\n{content}\n--- End of content ---")  # Debug log
             parsed = _safe_json_loads(content)
         except json.JSONDecodeError as exc:
+            print(f"Failed to parse RCA LLM judge response as JSON. Content was:\n{content}\n--- End of content ---")  # Debug log
             raise RCAJudgeError("RCA LLM judge returned invalid JSON.") from exc
 
         return _normalize_result(parsed)
