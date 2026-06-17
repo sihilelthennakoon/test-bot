@@ -655,6 +655,33 @@ def _fetch_existing_span_annotations(
     )
 
 
+def normalize_existing_annotations_dataframe(annotations_df: pd.DataFrame) -> pd.DataFrame:
+    if annotations_df.empty or "span_id" in annotations_df.columns:
+        return annotations_df.copy()
+
+    normalized = annotations_df.copy()
+    reset = normalized.reset_index()
+    if "span_id" in reset.columns:
+        return reset
+
+    if normalized.index.name == "span_id":
+        reset = normalized.reset_index()
+        if "span_id" in reset.columns:
+            return reset
+
+    return normalized
+
+
+def fetch_existing_span_annotations(
+    spans_df: pd.DataFrame,
+    request: RawSpansDataFrameRequest,
+    adapter: PhoenixAdapter,
+) -> pd.DataFrame:
+    return normalize_existing_annotations_dataframe(
+        _fetch_existing_span_annotations(spans_df, request, adapter)
+    )
+
+
 def fetch_phoenix_spans_dataframe(
     request: RawSpansDataFrameRequest,
     adapter: PhoenixAdapter,

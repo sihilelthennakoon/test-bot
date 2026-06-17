@@ -20,6 +20,7 @@ import os
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
+import tempfile
 from typing import Any, Iterable
 from ragbot.rca.rca_service import generate_rca
 
@@ -27,7 +28,7 @@ import pandas as pd
 
 from data_fetch.fetch_from_phoenix import (
 	build_default_adapter,
-	fetch_phoenix_spans_dataframe,
+	fetch_existing_span_annotations,
 	log_phoenix_span_annotations,
 	RawSpansDataFrameRequest,
 	PhoenixAdapter,
@@ -53,6 +54,10 @@ RCA_EVALUATOR_TO_SOURCE_EVALUATOR = {
 	"faithfulness": "groundedness",
 	"safety": "safety",
 }
+
+BATCH_EVALUATION_REQUIRED_ANNOTATIONS = frozenset(
+	{"correctness", "relevance", "faithfulness", "safety"}
+)
 
 INPUT_CANDIDATES = (
 	"input",
@@ -126,27 +131,69 @@ def _utc_now() -> datetime:
 	return datetime.now(timezone.utc)
 
 
-def read_last_eval_timestamp(path: Path) -> datetime:
+@dataclass(frozen=True, slots=True)
+class BatchEvaluationCheckpoint:
+	high_watermark_time: datetime | None = None
+	processed_keys: tuple[str, ...] = ()
+
+
+def read_checkpoint(path: Path) -> BatchEvaluationCheckpoint:
 	try:
 		raw_value = path.read_text(encoding="utf-8").strip()
-	except FileNotFoundError as exc:
-		raise ValueError(f"Last eval timestamp file does not exist: {path}") from exc
+	except FileNotFoundError:
+		return BatchEvaluationCheckpoint()
 	except OSError as exc:
-		raise ValueError(f"Unable to read last eval timestamp file: {path}") from exc
+		raise ValueError(f"Unable to read batch evaluation checkpoint file: {path}") from exc
 
 	if not raw_value:
-		raise ValueError(f"Last eval timestamp file is empty: {path}")
+		return BatchEvaluationCheckpoint()
 
 	try:
-		return _normalize_datetime(raw_value)
+		payload = json.loads(raw_value)
+	except json.JSONDecodeError as exc:
+		raise ValueError(f"Invalid batch evaluation checkpoint JSON in {path}") from exc
+
+	if not isinstance(payload, dict):
+		raise ValueError(f"Batch evaluation checkpoint must be a JSON object: {path}")
+
+	try:
+		high_watermark_time = _normalize_datetime(payload.get("high_watermark_time"))
 	except ValueError as exc:
-		raise ValueError(f"Invalid last eval timestamp in {path}: {raw_value}") from exc
+		raise ValueError(f"Invalid batch evaluation checkpoint high_watermark_time in {path}") from exc
+	raw_processed_keys = payload.get("processed_keys", [])
+	if not isinstance(raw_processed_keys, list) or any(not isinstance(item, str) for item in raw_processed_keys):
+		raise ValueError(f"Batch evaluation checkpoint processed_keys must be a list of strings: {path}")
+
+	return BatchEvaluationCheckpoint(
+		high_watermark_time=high_watermark_time,
+		processed_keys=tuple(raw_processed_keys),
+	)
 
 
-def write_last_eval_timestamp(path: Path, timestamp: datetime) -> None:
-	normalized = _normalize_datetime(timestamp)
+def write_checkpoint(path: Path, checkpoint: BatchEvaluationCheckpoint) -> None:
 	path.parent.mkdir(parents=True, exist_ok=True)
-	path.write_text(normalized.isoformat(), encoding="utf-8")
+	payload = {
+		"high_watermark_time": (
+			checkpoint.high_watermark_time.astimezone(timezone.utc).isoformat()
+			if checkpoint.high_watermark_time is not None
+			else None
+		),
+		"processed_keys": list(checkpoint.processed_keys),
+	}
+
+	with tempfile.NamedTemporaryFile(
+		"w",
+		encoding="utf-8",
+		dir=path.parent,
+		prefix=f"{path.name}.",
+		suffix=".tmp",
+		delete=False,
+	) as temp_file:
+		json.dump(payload, temp_file, indent=2, ensure_ascii=False)
+		temp_file.write("\n")
+		temp_path = Path(temp_file.name)
+
+	temp_path.replace(path)
 
 
 def _coerce_text(value: Any) -> str:
@@ -284,6 +331,26 @@ def _span_id_value(record: dict[str, Any]) -> str:
 	)
 
 
+def _trace_id_value(record: dict[str, Any]) -> str:
+	return _coerce_text(record.get("context.trace_id") or record.get("trace_id"))
+
+
+def _span_name_value(record: dict[str, Any]) -> str:
+	return _coerce_text(record.get("name") or record.get("span_name"))
+
+
+def _start_time_value(record: dict[str, Any]) -> datetime | None:
+	return _normalize_datetime(record.get("start_time"))
+
+
+def build_composite_checkpoint_key(record: dict[str, Any]) -> str:
+	trace_id = _trace_id_value(record)
+	start_time = _start_time_value(record)
+	span_name = _span_name_value(record)
+	start_time_text = start_time.isoformat() if start_time is not None else ""
+	return f"{trace_id}|{start_time_text}|{span_name}"
+
+
 PARENT_ID_CANDIDATES = (
 	"parent_id",
 	"parent.span_id",
@@ -345,6 +412,109 @@ def _filter_main_application_spans(spans_df: pd.DataFrame) -> pd.DataFrame:
 		_is_main_application_span(series.to_dict())
 		for _, series in spans_df.iterrows()
 	]
+	return spans_df.loc[mask].copy()
+
+
+def _filter_batch_evaluation_candidate_spans(spans_df: pd.DataFrame) -> pd.DataFrame:
+	"""Keep only root LangGraph CHAIN spans for batch evaluation."""
+	return _filter_main_application_spans(spans_df)
+
+
+def filter_checkpointed_spans(
+	spans_df: pd.DataFrame,
+	checkpoint: BatchEvaluationCheckpoint,
+) -> pd.DataFrame:
+	if spans_df.empty or checkpoint.high_watermark_time is None:
+		return spans_df.copy()
+
+	processed_keys = set(checkpoint.processed_keys)
+	high_watermark_time = checkpoint.high_watermark_time
+	mask = []
+	for _, series in spans_df.iterrows():
+		record = series.to_dict()
+		start_time = _start_time_value(record)
+		if start_time is None:
+			mask.append(True)
+			continue
+		if start_time < high_watermark_time:
+			mask.append(False)
+			continue
+		if start_time > high_watermark_time:
+			mask.append(True)
+			continue
+		mask.append(build_composite_checkpoint_key(record) not in processed_keys)
+	return spans_df.loc[mask].copy()
+
+
+def update_checkpoint_after_success(
+	path: Path,
+	evaluated_spans_df: pd.DataFrame,
+	old_checkpoint: BatchEvaluationCheckpoint,
+) -> BatchEvaluationCheckpoint:
+	if evaluated_spans_df.empty:
+		return old_checkpoint
+
+	processed_records: list[tuple[datetime, str]] = []
+	for _, series in evaluated_spans_df.iterrows():
+		record = series.to_dict()
+		start_time = _start_time_value(record)
+		if start_time is None:
+			continue
+		processed_records.append((start_time, build_composite_checkpoint_key(record)))
+
+	if not processed_records:
+		return old_checkpoint
+
+	new_high_watermark_time = max(start_time for start_time, _ in processed_records)
+	watermark_keys = {
+		key
+		for start_time, key in processed_records
+		if start_time == new_high_watermark_time
+	}
+
+	new_checkpoint = BatchEvaluationCheckpoint(
+		high_watermark_time=new_high_watermark_time,
+		processed_keys=tuple(sorted(watermark_keys)),
+	)
+	write_checkpoint(path, new_checkpoint)
+	return new_checkpoint
+
+
+def _fully_batch_annotated_span_ids(annotations_df: pd.DataFrame) -> set[str]:
+	if (
+		annotations_df.empty
+		or "span_id" not in annotations_df.columns
+		or "annotation_name" not in annotations_df.columns
+	):
+		return set()
+
+	annotation_names_by_span_id: dict[str, set[str]] = {}
+	for _, series in annotations_df.iterrows():
+		span_id = _coerce_text(series.get("span_id"))
+		annotation_name = _coerce_text(series.get("annotation_name"))
+		if not span_id or not annotation_name:
+			continue
+		annotation_names_by_span_id.setdefault(span_id, set()).add(annotation_name)
+
+	return {
+		span_id
+		for span_id, annotation_names in annotation_names_by_span_id.items()
+		if BATCH_EVALUATION_REQUIRED_ANNOTATIONS.issubset(annotation_names)
+	}
+
+
+def _filter_spans_missing_batch_annotations(
+	spans_df: pd.DataFrame,
+	annotations_df: pd.DataFrame,
+) -> pd.DataFrame:
+	if spans_df.empty:
+		return spans_df.copy()
+
+	fully_annotated_span_ids = _fully_batch_annotated_span_ids(annotations_df)
+	mask = []
+	for _, series in spans_df.iterrows():
+		span_id = _span_id_value(series.to_dict())
+		mask.append(span_id not in fully_annotated_span_ids)
 	return spans_df.loc[mask].copy()
 
 
@@ -888,8 +1058,8 @@ class BatchEvaluationConfig:
 	phoenix_base_url: str = _default_phoenix_base_url()
 	sync_annotations: bool = True
 	save_annotations: bool = True
-	use_last_eval_timestamp: bool = False
-	last_eval_timestamp_file: Path | None = None
+	checkpoint_file: Path | None = None
+	use_checkpoint: bool = False
 	adapter: PhoenixAdapter | None = None
 
 
@@ -918,15 +1088,16 @@ def resolve_batch_evaluation_config(
 	resolved_to = _normalize_datetime(config.to_time) or _normalize_datetime(now or _utc_now())
 	resolved_from = _normalize_datetime(config.from_time)
 
-	if resolved_from is None and config.use_last_eval_timestamp:
-		if config.last_eval_timestamp_file is None:
-			raise ValueError("last_eval_timestamp_file is required when timestamp mode is enabled")
-		resolved_from = read_last_eval_timestamp(config.last_eval_timestamp_file)
+	if config.use_checkpoint:
+		if config.checkpoint_file is None:
+			raise ValueError("checkpoint_file is required when checkpoint mode is enabled")
+		checkpoint = read_checkpoint(config.checkpoint_file)
+		if checkpoint.high_watermark_time is not None:
+			resolved_from = checkpoint.high_watermark_time
+	elif resolved_from is None:
+		raise ValueError("from_time is required when checkpoint mode is disabled and no explicit from_time is provided")
 
-	if resolved_from is None:
-		raise ValueError("from_time is required when timestamp mode is disabled and no explicit from_time is provided")
-
-	if resolved_from >= resolved_to:
+	if resolved_from is not None and resolved_from >= resolved_to:
 		raise ValueError("from_time must be earlier than to_time")
 
 	return replace(
@@ -941,18 +1112,37 @@ async def evaluate_span_batch(config: BatchEvaluationConfig) -> BatchEvaluationR
 
 	config = resolve_batch_evaluation_config(config)
 	adapter = config.adapter or build_default_adapter(config.phoenix_base_url)
-	spans_df = fetch_phoenix_spans_dataframe(
-		RawSpansDataFrameRequest(
-			from_time=_normalize_datetime(config.from_time),
-			to_time=_normalize_datetime(config.to_time),
-			limit=config.limit,
-			root_spans_only=config.root_spans_only,
-			project_name=config.project_name,
-		),
-		adapter,
+	checkpoint = read_checkpoint(config.checkpoint_file) if config.use_checkpoint and config.checkpoint_file is not None else BatchEvaluationCheckpoint()
+	request = RawSpansDataFrameRequest(
+		from_time=_normalize_datetime(config.from_time),
+		to_time=_normalize_datetime(config.to_time),
+		limit=config.limit,
+		root_spans_only=True,
+		project_name=config.project_name,
 	)
-	spans_df = _filter_main_application_spans(spans_df)
+	spans_df = adapter.fetch_spans_dataframe(
+		from_time=request.from_time,
+		to_time=request.to_time,
+		project_name=request.project_name,
+		limit=request.limit,
+		root_spans_only=request.root_spans_only,
+	)
+	with open("csv/spans_df_prev.json", "a", encoding="utf-8") as f:
+		f.write(spans_df.to_json(orient="records", date_format="iso", indent=2))
+		f.write("\n")
 
+	spans_df = _filter_batch_evaluation_candidate_spans(spans_df)
+	with open("csv/spans_df.json", "a", encoding="utf-8") as f:
+		f.write(spans_df.to_json(orient="records", date_format="iso", indent=2))
+		f.write("\n")
+	existing_annotations_df = fetch_existing_span_annotations(spans_df, request, adapter)
+	with open("csv/existing_annotations_df.json", "a", encoding="utf-8") as f:
+		f.write(existing_annotations_df.to_json(orient="records", date_format="iso", indent=2))
+		f.write("\n")
+	spans_df = _filter_spans_missing_batch_annotations(spans_df, existing_annotations_df)
+	if config.use_checkpoint:
+		spans_df = filter_checkpointed_spans(spans_df, checkpoint)
+	
 	if spans_df.empty:
 		annotations_df = pd.DataFrame(
 			columns=["span_id", "annotation_name", "annotator_kind", "label", "score", "explanation", "metadata"]
@@ -969,7 +1159,7 @@ async def evaluate_span_batch(config: BatchEvaluationConfig) -> BatchEvaluationR
 
 	runner = _build_runner()
 	scored_df = await runner.evaluate_dataframe(evaluation_df)
-	annotations_df = _build_annotations_frame(scored_df)#tt
+	annotations_df = _build_annotations_frame(scored_df)
 	alerts.log_degradation_alerts(annotations_df)
 
 	rca_df = build_rca_feature_frame(annotations_df, evaluation_df)
@@ -988,16 +1178,22 @@ async def evaluate_span_batch(config: BatchEvaluationConfig) -> BatchEvaluationR
 		],
 	)
 
-	if config.save_annotations: #put call here
+	if config.save_annotations:
 		log_phoenix_span_annotations(
 			merged_annotations_df,
 			adapter,
 			sync=config.sync_annotations,
 		)
+		if config.use_checkpoint and config.checkpoint_file is not None and not merged_annotations_df.empty:
+			update_checkpoint_after_success(
+				config.checkpoint_file,
+				evaluation_df,
+				checkpoint,
+			)
 
 	return BatchEvaluationResult(
 		spans_df=evaluation_df,
-		evaluation_df=scored_df,	
+		evaluation_df=scored_df,
 		annotations_df=merged_annotations_df,
 	)
 
@@ -1009,13 +1205,17 @@ def run_span_batch(config: BatchEvaluationConfig) -> BatchEvaluationResult:
 
 
 __all__ = [
+	"BatchEvaluationCheckpoint",
 	"BatchEvaluationConfig",
 	"BatchEvaluationResult",
 	"build_rca_feature_frame",
+	"build_composite_checkpoint_key",
 	"evaluate_span_batch",
+	"filter_checkpointed_spans",
 	"merge_final_rca_into_annotations",
-	"read_last_eval_timestamp",
+	"read_checkpoint",
 	"resolve_batch_evaluation_config",
 	"run_span_batch",
-	"write_last_eval_timestamp",
+	"update_checkpoint_after_success",
+	"write_checkpoint",
 ]

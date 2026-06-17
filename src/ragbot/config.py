@@ -51,11 +51,11 @@ class Settings:
     batch_evaluation_cron_save_annotations: bool = os.getenv(
         "BATCH_EVALUATION_CRON_SAVE_ANNOTATIONS", "true"
     ).lower() in {"true", "1", "yes"}
-    batch_evaluation_use_last_eval_timestamp: bool = os.getenv(
-        "BATCH_EVALUATION_USE_LAST_EVAL_TIMESTAMP", "false"
+    batch_evaluation_use_checkpoint: bool = os.getenv(
+        "BATCH_EVALUATION_USE_CHECKPOINT", "false"
     ).lower() in {"true", "1", "yes"}
-    last_eval_timestamp_file: Path = Path(
-        os.getenv("LAST_EVAL_TIMESTAMP_FILE", "data/last_eval_timestamp.txt")
+    batch_evaluation_checkpoint_file: Path = Path(
+        os.getenv("BATCH_EVALUATION_CHECKPOINT_FILE", "data/batch_evaluation/checkpoint.json")
     )
     server_host: str = os.getenv("RAGBOT_HOST", "127.0.0.1")
     server_port: int = int(os.getenv("RAGBOT_PORT", "8000"))
@@ -67,7 +67,7 @@ class Settings:
         self.index_dir.mkdir(parents=True, exist_ok=True)
         self.phoenix_fetch_output_dir.mkdir(parents=True, exist_ok=True)
         self.phoenix_fetch_checkpoint_file.parent.mkdir(parents=True, exist_ok=True)
-        self.last_eval_timestamp_file.parent.mkdir(parents=True, exist_ok=True)
+        self.batch_evaluation_checkpoint_file.parent.mkdir(parents=True, exist_ok=True)
 
 
 def get_settings() -> Settings:
