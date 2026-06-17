@@ -10,6 +10,7 @@ from ragbot.evaluations.batch_evaluation.evaluate_batch import (
 	_filter_main_application_spans,
 	merge_final_rca_into_annotations,
 )
+from ragbot.rca.rca_judge import RCAJudgeError
 
 
 def test_filter_main_application_spans_keeps_only_root_chain_span() -> None:
@@ -277,9 +278,84 @@ def test_evaluate_span_batch_runs_degradation_alert_check_after_annotations(monk
 		BatchEvaluationConfig(
 			adapter=FakeAdapter(),
 			save_annotations=False,
+			from_time="2026-06-16T10:00:00+00:00",
+			to_time="2026-06-16T10:05:00+00:00",
 		)
 	)
 
 	assert result.annotation_count == 1
 	assert len(seen_annotations) == 1
 	assert seen_annotations[0]["annotation_name"].tolist() == ["correctness"]
+
+
+def test_evaluate_span_batch_continues_when_rca_judge_fails(monkeypatch) -> None:
+	class FakeAdapter:
+		def fetch_spans_dataframe(self, **kwargs):
+			return pd.DataFrame(
+				[
+					{
+						"name": "LangGraph",
+						"span_kind": "CHAIN",
+						"parent_id": None,
+						"span_id": "span-1",
+						"context.trace_id": "trace-1",
+						"status_code": "OK",
+						"status_message": "",
+						"start_time": "2026-06-16T10:00:00+00:00",
+						"end_time": "2026-06-16T10:00:01+00:00",
+						"attributes.metadata": '{"ls_integration":"langgraph","langgraph_node":"finalize"}',
+						"attributes.input.value": '{"message": "Question?"}',
+						"attributes.output.value": (
+							'{"answer": "Answer.", "context": "Context.", '
+							'"response": {"answer": "Answer."}, '
+							'"sources": [{"score": 0.2, "metadata": {}}]}'
+						),
+					}
+				]
+			)
+
+		def fetch_span_annotations_dataframe(self, **kwargs):
+			return pd.DataFrame()
+
+		def log_span_annotations_dataframe(self, **kwargs):
+			raise AssertionError("save_annotations=False should skip Phoenix logging")
+
+	class FakeRunner:
+		async def evaluate_dataframe(self, evaluation_df):
+			scored_df = evaluation_df.copy()
+			scored_df["correctness_score"] = [
+				{"score": 0.0, "label": "INCORRECT", "explanation": "bad"}
+			]
+			scored_df["relevance_score"] = [
+				{"score": 1.0, "label": "RELEVANT", "explanation": "ok"}
+			]
+			scored_df["groundedness_score"] = [
+				{"score": 1.0, "label": "GROUNDED", "explanation": "ok"}
+			]
+			scored_df["safety_score"] = [
+				{"score": 1.0, "label": "SAFE", "explanation": "ok"}
+			]
+			return scored_df
+
+	monkeypatch.setattr(batch_module, "_build_runner", lambda: FakeRunner())
+	monkeypatch.setattr(
+		"ragbot.rca.rca_service.RCAJudge.judge",
+		lambda self, evidence: (_ for _ in ()).throw(RCAJudgeError("RCA LLM judge returned invalid JSON.")),
+	)
+
+	result = batch_module.run_span_batch(
+		BatchEvaluationConfig(
+			adapter=FakeAdapter(),
+			save_annotations=False,
+			from_time="2026-06-16T10:00:00+00:00",
+			to_time="2026-06-16T10:05:00+00:00",
+		)
+	)
+
+	assert result.annotation_count == 4
+	correctness_metadata = result.annotations_df.loc[
+		result.annotations_df["annotation_name"] == "correctness", "metadata"
+	].iloc[0]
+	assert correctness_metadata["rca_root_cause_category"] == "UNKNOWN"
+	assert correctness_metadata["rca_confidence"] == 0.0
+	assert "fallback used" in correctness_metadata["rca_explanation"]

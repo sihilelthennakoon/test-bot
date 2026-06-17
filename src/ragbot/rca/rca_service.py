@@ -7,7 +7,7 @@ import pandas as pd
 
 from ragbot.config import get_settings
 from ragbot.rca.evidence_builder import build_evidence_packages
-from ragbot.rca.rca_judge import RCAJudge
+from ragbot.rca.rca_judge import RCAJudge, RCAJudgeError
 
 
 def _extract_failed_scores(scores: dict[str, Any], threshold: float) -> dict[str, float]:
@@ -47,6 +47,18 @@ def _build_evaluator_evidence(
     return evaluator_evidence
 
 
+def _fallback_judgement(error: RCAJudgeError) -> dict[str, Any]:
+    error_message = str(error).strip() or "Unknown RCA judge failure."
+    return {
+        "root_cause_category": "UNKNOWN",
+        "confidence": 0.0,
+        "evidence": [f"RCA judge fallback triggered: {error_message}"],
+        "explanation": f"RCA judge fallback used because the LLM response could not be normalized: {error_message}",
+        "recommended_action": "Review the failing trace and the raw RCA judge response in application logs.",
+        "judge_error": error_message,
+    }
+
+
 def generate_rca(df: pd.DataFrame) -> list[dict[str, Any]]:
     """Generate one structured RCA result per failed evaluator in the dataframe."""
 
@@ -65,7 +77,10 @@ def generate_rca(df: pd.DataFrame) -> list[dict[str, Any]]:
                 evaluator_score,
                 threshold,
             )
-            judgement = judge.judge(evaluator_evidence)
+            try:
+                judgement = judge.judge(evaluator_evidence)
+            except RCAJudgeError as exc:
+                judgement = _fallback_judgement(exc)
             results.append(
                 {
                     "trace_id": evidence["trace_id"],
@@ -78,6 +93,7 @@ def generate_rca(df: pd.DataFrame) -> list[dict[str, Any]]:
                     "evidence": judgement["evidence"],
                     "explanation": judgement["explanation"],
                     "recommended_action": judgement["recommended_action"],
+                    "judge_error": judgement.get("judge_error", ""),
                 }
             )
     return results

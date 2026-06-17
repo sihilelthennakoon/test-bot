@@ -15,7 +15,9 @@ from data_fetch.fetch_from_phoenix import (
 from ragbot.config import get_settings
 from ragbot.evaluations.batch_evaluation.evaluate_batch import (
     BatchEvaluationConfig,
+    resolve_batch_evaluation_config,
     run_span_batch,
+    write_last_eval_timestamp,
 )
 from ragbot.evaluations.batch_evaluation.scheduler import BatchEvaluationScheduler
 from ragbot.schemas import ChatRequest, ChatResponse, IngestRequest, IngestResponse
@@ -46,6 +48,11 @@ class BatchEvaluationRunResponse(BaseModel):
     annotations_saved: bool
 
 
+RawSpansDataFrameResponse.model_rebuild()
+BatchEvaluationRunRequest.model_rebuild()
+BatchEvaluationRunResponse.model_rebuild()
+
+
 def _dataframe_to_rows(dataframe) -> list[dict[str, Any]]:
     if dataframe.empty:
         return []
@@ -64,6 +71,8 @@ def create_app() -> FastAPI:
                 phoenix_base_url=settings.phoenix_query_endpoint,
                 sync_annotations=settings.batch_evaluation_cron_sync_annotations,
                 save_annotations=settings.batch_evaluation_cron_save_annotations,
+                use_last_eval_timestamp=settings.batch_evaluation_use_last_eval_timestamp,
+                last_eval_timestamp_file=settings.last_eval_timestamp_file,
             ),
             interval_seconds=settings.batch_evaluation_cron_interval_seconds,
         )
@@ -175,7 +184,7 @@ def create_app() -> FastAPI:
     def run_batch_evaluation(request: BatchEvaluationRunRequest) -> BatchEvaluationRunResponse:
         """Run Phoenix span evaluations and optionally write annotations back."""
         try:
-            result = run_span_batch(
+            batch_config = resolve_batch_evaluation_config(
                 BatchEvaluationConfig(
                     from_time=request.from_time,
                     to_time=request.to_time,
@@ -186,8 +195,13 @@ def create_app() -> FastAPI:
                     phoenix_base_url=settings.phoenix_query_endpoint,
                     sync_annotations=request.sync_annotations,
                     save_annotations=request.save_annotations,
+                    use_last_eval_timestamp=settings.batch_evaluation_use_last_eval_timestamp,
+                    last_eval_timestamp_file=settings.last_eval_timestamp_file,
                 )
             )
+            result = run_span_batch(batch_config)
+            if batch_config.use_last_eval_timestamp and batch_config.last_eval_timestamp_file is not None:
+                write_last_eval_timestamp(batch_config.last_eval_timestamp_file, batch_config.to_time)
             return BatchEvaluationRunResponse(
                 span_count=result.span_count,
                 evaluated_count=int(len(result.evaluation_df)),

@@ -17,8 +17,9 @@ import ast
 import asyncio
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Iterable
 from ragbot.rca.rca_service import generate_rca
 
@@ -119,6 +120,33 @@ def _normalize_datetime(value: datetime | str | None) -> datetime | None:
 	if parsed.tzinfo is None:
 		return parsed.replace(tzinfo=timezone.utc)
 	return parsed.astimezone(timezone.utc)
+
+
+def _utc_now() -> datetime:
+	return datetime.now(timezone.utc)
+
+
+def read_last_eval_timestamp(path: Path) -> datetime:
+	try:
+		raw_value = path.read_text(encoding="utf-8").strip()
+	except FileNotFoundError as exc:
+		raise ValueError(f"Last eval timestamp file does not exist: {path}") from exc
+	except OSError as exc:
+		raise ValueError(f"Unable to read last eval timestamp file: {path}") from exc
+
+	if not raw_value:
+		raise ValueError(f"Last eval timestamp file is empty: {path}")
+
+	try:
+		return _normalize_datetime(raw_value)
+	except ValueError as exc:
+		raise ValueError(f"Invalid last eval timestamp in {path}: {raw_value}") from exc
+
+
+def write_last_eval_timestamp(path: Path, timestamp: datetime) -> None:
+	normalized = _normalize_datetime(timestamp)
+	path.parent.mkdir(parents=True, exist_ok=True)
+	path.write_text(normalized.isoformat(), encoding="utf-8")
 
 
 def _coerce_text(value: Any) -> str:
@@ -860,6 +888,8 @@ class BatchEvaluationConfig:
 	phoenix_base_url: str = _default_phoenix_base_url()
 	sync_annotations: bool = True
 	save_annotations: bool = True
+	use_last_eval_timestamp: bool = False
+	last_eval_timestamp_file: Path | None = None
 	adapter: PhoenixAdapter | None = None
 
 
@@ -880,9 +910,36 @@ class BatchEvaluationResult:
 		return int(len(self.annotations_df))
 
 
+def resolve_batch_evaluation_config(
+	config: BatchEvaluationConfig,
+	*,
+	now: datetime | None = None,
+) -> BatchEvaluationConfig:
+	resolved_to = _normalize_datetime(config.to_time) or _normalize_datetime(now or _utc_now())
+	resolved_from = _normalize_datetime(config.from_time)
+
+	if resolved_from is None and config.use_last_eval_timestamp:
+		if config.last_eval_timestamp_file is None:
+			raise ValueError("last_eval_timestamp_file is required when timestamp mode is enabled")
+		resolved_from = read_last_eval_timestamp(config.last_eval_timestamp_file)
+
+	if resolved_from is None:
+		raise ValueError("from_time is required when timestamp mode is disabled and no explicit from_time is provided")
+
+	if resolved_from >= resolved_to:
+		raise ValueError("from_time must be earlier than to_time")
+
+	return replace(
+		config,
+		from_time=resolved_from,
+		to_time=resolved_to,
+	)
+
+
 async def evaluate_span_batch(config: BatchEvaluationConfig) -> BatchEvaluationResult:
 	"""Pull Phoenix spans, evaluate them, and write the annotations back."""
 
+	config = resolve_batch_evaluation_config(config)
 	adapter = config.adapter or build_default_adapter(config.phoenix_base_url)
 	spans_df = fetch_phoenix_spans_dataframe(
 		RawSpansDataFrameRequest(
@@ -957,5 +1014,8 @@ __all__ = [
 	"build_rca_feature_frame",
 	"evaluate_span_batch",
 	"merge_final_rca_into_annotations",
+	"read_last_eval_timestamp",
+	"resolve_batch_evaluation_config",
 	"run_span_batch",
+	"write_last_eval_timestamp",
 ]
