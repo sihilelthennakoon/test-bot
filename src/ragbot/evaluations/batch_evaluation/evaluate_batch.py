@@ -1132,13 +1132,13 @@ async def evaluate_span_batch(config: BatchEvaluationConfig) -> BatchEvaluationR
 		f.write("\n")
 
 	spans_df = _filter_batch_evaluation_candidate_spans(spans_df)
-	with open("csv/spans_df.json", "a", encoding="utf-8") as f:
-		f.write(spans_df.to_json(orient="records", date_format="iso", indent=2))
-		f.write("\n")
+	# with open("csv/spans_df.json", "a", encoding="utf-8") as f:
+	# 	f.write(spans_df.to_json(orient="records", date_format="iso", indent=2))
+	# 	f.write("\n")
 	existing_annotations_df = fetch_existing_span_annotations(spans_df, request, adapter)
-	with open("csv/existing_annotations_df.json", "a", encoding="utf-8") as f:
-		f.write(existing_annotations_df.to_json(orient="records", date_format="iso", indent=2))
-		f.write("\n")
+	# with open("csv/existing_annotations_df.json", "a", encoding="utf-8") as f:
+	# 	f.write(existing_annotations_df.to_json(orient="records", date_format="iso", indent=2))
+	# 	f.write("\n")
 	spans_df = _filter_spans_missing_batch_annotations(spans_df, existing_annotations_df)
 	if config.use_checkpoint:
 		spans_df = filter_checkpointed_spans(spans_df, checkpoint)

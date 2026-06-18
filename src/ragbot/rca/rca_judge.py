@@ -179,10 +179,10 @@ class RCAJudge:
         content = _strip_json_fence_markers(content)
 
         try:
-            print (f"RCA Judge raw response content:\n{content}\n--- End of content ---")  # Debug log
+            # print (f"RCA Judge raw response content:\n{content}\n--- End of content ---")  # Debug log
             parsed = _safe_json_loads(content)
         except json.JSONDecodeError as exc:
-            print(f"Failed to parse RCA LLM judge response as JSON. Content was:\n{content}\n--- End of content ---")  # Debug log
+            # print(f"Failed to parse RCA LLM judge response as JSON. Content was:\n{content}\n--- End of content ---")  # Debug log
             raise RCAJudgeError("RCA LLM judge returned invalid JSON.") from exc
 
         return _normalize_result(parsed)
