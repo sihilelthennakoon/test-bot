@@ -1127,9 +1127,9 @@ async def evaluate_span_batch(config: BatchEvaluationConfig) -> BatchEvaluationR
 		limit=request.limit,
 		root_spans_only=request.root_spans_only,
 	)
-	with open("csv/spans_df_prev.json", "a", encoding="utf-8") as f:
-		f.write(spans_df.to_json(orient="records", date_format="iso", indent=2))
-		f.write("\n")
+	# with open("csv/spans_df_prev.json", "a", encoding="utf-8") as f:
+	# 	f.write(spans_df.to_json(orient="records", date_format="iso", indent=2))
+	# 	f.write("\n")
 
 	spans_df = _filter_batch_evaluation_candidate_spans(spans_df)
 	# with open("csv/spans_df.json", "a", encoding="utf-8") as f:
