@@ -276,11 +276,68 @@ Open http://localhost:8000/docs in your browser to explore endpoints interactive
 | `BATCH_EVALUATION_CRON_LIMIT` | `1000` | Max Phoenix spans fetched per scheduled batch |
 | `BATCH_EVALUATION_CRON_SYNC_ANNOTATIONS` | `true` | Wait for scheduled annotation writes to sync |
 | `BATCH_EVALUATION_CRON_SAVE_ANNOTATIONS` | `true` | Write scheduled evaluation annotations back to Phoenix |
+| `BATCH_EVALUATION_USE_CHECKPOINT` | `false` | Enable exact-watermark checkpointing for batch evaluation |
+| `BATCH_EVALUATION_CHECKPOINT_FILE` | `data/batch_evaluation/checkpoint.json` | Local batch evaluation checkpoint file |
 | `RAGBOT_HOST` | `127.0.0.1` | API server host |
 | `RAGBOT_PORT` | `8000` | API server port |
 | `RAGBOT_RELOAD` | `false` | Enable hot-reload (dev only) |
 
 When the API server starts, the batch evaluation scheduler runs on a daemon thread. It waits one interval, then evaluates `PHOENIX_FETCH_SPAN_KIND` spans and saves annotations to Phoenix.
+
+## Batch evaluation pipeline
+
+The batch evaluation job reads traced LangGraph application spans from Phoenix, scores them with the local evaluators already used by the project, enriches the results with RCA metadata, and writes the final annotations back to Phoenix.
+
+### End-to-end flow
+
+1. `resolve_batch_evaluation_config(...)` normalizes the run window.
+   If `BATCH_EVALUATION_USE_CHECKPOINT=true`, the job loads `BATCH_EVALUATION_CHECKPOINT_FILE`.
+   When the checkpoint has `high_watermark_time`, the job fetches from that exact timestamp forward.
+   When the checkpoint is missing or empty, the job preserves an explicit `from_time` if provided; otherwise it backfills Phoenix history by leaving `from_time=None`.
+2. The batch evaluator requests only root spans from Phoenix by forcing `root_spans_only=True`, then keeps only root `CHAIN` spans whose main application node is `LangGraph`.
+3. The evaluator fetches existing annotations only for those filtered root `LangGraph` spans to decide whether a span is already fully evaluated.
+4. Root spans are skipped only if they already have the full batch annotation set:
+   `correctness`, `relevance`, `faithfulness`, and `safety`.
+   Root spans with partial annotations are re-evaluated.
+   Child spans in the same trace do not affect this eligibility check.
+5. `filter_checkpointed_spans(...)` removes only spans that match the exact checkpoint watermark tie-set.
+   The composite key format is:
+   `context.trace_id|start_time|name`
+   Fallbacks are `trace_id` for the trace component and `span_name` for the name component.
+6. `_build_evaluation_frame(...)` derives the evaluator input fields:
+   `input`, `output`, `reference`, `span_id`, and `span_kind`.
+7. `EvaluationRunner.evaluate_dataframe(...)` runs the four evaluators:
+   `correctness`, `relevance`, `groundedness`, and `safety`.
+8. `_build_annotations_frame(...)` converts evaluator outputs into Phoenix annotation rows.
+   `groundedness` is written back under the Phoenix annotation name `faithfulness`.
+9. `build_rca_feature_frame(...)` constructs the RCA feature frame from spans plus annotations.
+10. `generate_rca(...)` produces the final RCA results.
+11. `merge_final_rca_into_annotations(...)` adds selected RCA fields into annotation metadata.
+12. `log_phoenix_span_annotations(...)` writes the merged annotations back to Phoenix.
+13. Only after a successful Phoenix write, `update_checkpoint_after_success(...)` advances the local batch-evaluation checkpoint.
+
+### Checkpoint behavior
+
+Batch evaluation now uses a JSON checkpoint instead of timestamp-only checkpointing. The file stores:
+
+```json
+{
+  "high_watermark_time": "2026-06-17T10:30:00+00:00",
+  "processed_keys": [
+    "trace_id|start_time|span_name"
+  ]
+}
+```
+
+The checkpoint is exact-watermark based:
+
+- `high_watermark_time` is the maximum `start_time` from spans successfully evaluated and written back in the run.
+- `processed_keys` stores only the composite keys whose `start_time` exactly matches the current `high_watermark_time`.
+- Those keys are used only to avoid reprocessing duplicate ties when Phoenix returns spans at the watermark timestamp again on the next run.
+- If evaluation fails or Phoenix annotation write-back fails, the checkpoint is not advanced.
+- If `BATCH_EVALUATION_CRON_SAVE_ANNOTATIONS=false`, the job still evaluates spans but does not advance the checkpoint because no successful write-back occurred.
+
+This design allows a full-history backfill when no checkpoint exists, while still preventing duplicate reprocessing when multiple spans share the exact checkpoint timestamp.
 
 ## Testing
 
