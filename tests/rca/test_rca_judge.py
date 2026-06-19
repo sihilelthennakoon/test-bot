@@ -457,3 +457,139 @@ def test_generate_rca_returns_fallback_when_judge_fails(monkeypatch: pytest.Monk
     assert results[0]["confidence"] == 0.0
     assert "fallback used" in results[0]["explanation"]
     assert results[0]["judge_error"] == "RCA LLM judge returned invalid JSON."
+
+
+def test_generate_rca_skips_progress_bar_when_no_failed_scores(monkeypatch: pytest.MonkeyPatch):
+    finalize_only_evidence = _sample_evidence()
+    finalize_only_evidence["scores"] = {
+        "correctness": 0.95,
+        "relevance": 0.9,
+        "faithfulness": 0.85,
+        "safety": 0.8,
+    }
+    created_totals: list[int] = []
+
+    monkeypatch.setattr(
+        "ragbot.rca.rca_service.build_evidence_packages",
+        lambda df: [finalize_only_evidence],
+    )
+    monkeypatch.setattr(
+        "ragbot.rca.rca_service.get_settings",
+        lambda: types.SimpleNamespace(gemini_model="gemini-2.5-flash", rca_threshold=0.4),
+    )
+    monkeypatch.setattr("ragbot.rca.rca_service._create_rca_progress_bar", lambda total, label="RCA": created_totals.append(total) or None)
+
+    results = generate_rca(pd.DataFrame([{"trace_id": "unused"}]))
+
+    assert results == []
+    assert created_totals == []
+
+
+def test_generate_rca_updates_progress_once_per_trace_judgement(monkeypatch: pytest.MonkeyPatch):
+    events: list[tuple[str, str, int | None]] = []
+
+    class FakeProgressBar:
+        def __init__(self, total: int, label: str) -> None:
+            self.label = label
+            events.append(("create", label, total))
+
+        def update(self, step: int = 1) -> None:
+            events.append(("update", self.label, step))
+
+        def close(self) -> None:
+            events.append(("close", self.label, None))
+
+    monkeypatch.setattr(
+        "ragbot.rca.rca_service.build_evidence_packages",
+        lambda df: [_sample_evidence()],
+    )
+    monkeypatch.setattr(
+        "ragbot.rca.rca_service.get_settings",
+        lambda: types.SimpleNamespace(gemini_model="gemini-2.5-flash", rca_threshold=0.4),
+    )
+    monkeypatch.setattr(
+        "ragbot.rca.rca_service._create_rca_progress_bar",
+        lambda total, label="RCA": FakeProgressBar(total, label),
+    )
+    monkeypatch.setattr(
+        RCAJudge,
+        "judge",
+        lambda self, evidence: {
+            "root_cause_category": "RETRIEVAL_FAILURE",
+            "confidence": 0.95,
+            "evidence": ["The retriever returned irrelevant context."],
+            "explanation": "Short RCA description about retrieval failure.",
+            "recommended_action": "Inspect retriever configuration.",
+        },
+    )
+
+    results = generate_rca(pd.DataFrame([{"trace_id": "unused"}]))
+
+    assert [result["evaluator_name"] for result in results] == ["correctness", "relevance"]
+    assert events == [
+        ("create", "RCA trace-1", 2),
+        ("update", "RCA trace-1", 1),
+        ("update", "RCA trace-1", 1),
+        ("close", "RCA trace-1", None),
+    ]
+
+
+def test_generate_rca_creates_separate_progress_bar_for_each_trace(monkeypatch: pytest.MonkeyPatch):
+    events: list[tuple[str, str, int | None]] = []
+
+    class FakeProgressBar:
+        def __init__(self, total: int, label: str) -> None:
+            self.label = label
+            events.append(("create", label, total))
+
+        def update(self, step: int = 1) -> None:
+            events.append(("update", self.label, step))
+
+        def close(self) -> None:
+            events.append(("close", self.label, None))
+
+    second_evidence = _sample_evidence()
+    second_evidence["trace_id"] = "trace-2-abcdef123456"
+    second_evidence["scores"] = {
+        "correctness": 0.95,
+        "relevance": 0.2,
+        "faithfulness": 0.9,
+        "safety": 1.0,
+    }
+
+    monkeypatch.setattr(
+        "ragbot.rca.rca_service.build_evidence_packages",
+        lambda df: [_sample_evidence(), second_evidence],
+    )
+    monkeypatch.setattr(
+        "ragbot.rca.rca_service.get_settings",
+        lambda: types.SimpleNamespace(gemini_model="gemini-2.5-flash", rca_threshold=0.4),
+    )
+    monkeypatch.setattr(
+        "ragbot.rca.rca_service._create_rca_progress_bar",
+        lambda total, label="RCA": FakeProgressBar(total, label),
+    )
+    monkeypatch.setattr(
+        RCAJudge,
+        "judge",
+        lambda self, evidence: {
+            "root_cause_category": "RETRIEVAL_FAILURE",
+            "confidence": 0.95,
+            "evidence": ["The retriever returned irrelevant context."],
+            "explanation": "Short RCA description about retrieval failure.",
+            "recommended_action": "Inspect retriever configuration.",
+        },
+    )
+
+    results = generate_rca(pd.DataFrame([{"trace_id": "unused"}]))
+
+    assert [result["trace_id"] for result in results] == ["trace-1", "trace-1", "trace-2-abcdef123456"]
+    assert events == [
+        ("create", "RCA trace-1", 2),
+        ("update", "RCA trace-1", 1),
+        ("update", "RCA trace-1", 1),
+        ("close", "RCA trace-1", None),
+        ("create", "RCA trace-2-abcd...", 1),
+        ("update", "RCA trace-2-abcd...", 1),
+        ("close", "RCA trace-2-abcd...", None),
+    ]
